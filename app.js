@@ -66,7 +66,8 @@
   const REGIONS = ["East", "Middle", "West", "Unspecified"];
   const REGION_COLOR = { East: "#2a78d6", Middle: "#eb6834", West: "#1baf7a", Unspecified: "#a3a29c" };
   const AVAIL_COLOR = { Full: "#6250d6", Partial: "#eda100", Blank: "#a3a29c" };
-  const AVAIL_LABEL = { Full: "Full", Partial: "Partial", Blank: "Not stated" };
+  const AVAIL_LABEL = { Full: "Full", Partial: "Partial / Restrictions", Blank: "Not stated" };
+  const AVAIL_SHORT = { Full: "Full", Partial: "Partial/Restr.", Blank: "Not stated" };
 
   /* ================================================================== FIELD MATCHING */
   const FIELD_DEFS = [
@@ -108,13 +109,40 @@
   }
 
   /* ================================================================== CLASSIFY */
+  // Answer to the Availability question on its own: Full / Partial / Unavailable / Blank
   function classAvail(v) {
-    const t = String(v || "").trim().toLowerCase();
+    const t = String(v || "").replace(/[_]+/g, " ").trim().toLowerCase();   // Survey123 codes use underscores
     if (!t) return "Blank";
-    if (/\bnot\b|unavail|^no\b|none|decline/.test(t)) return "Unavailable";
-    if (/partial|limited/.test(t)) return "Partial";
+    if (/unavail|not\s+(currently\s+)?avail|^\s*(no|not|none)\b|cannot\s+deploy|can't\s+deploy|decline/.test(t)) return "Unavailable";
+    if (/partial/.test(t)) return "Partial";
     if (/full|yes|avail/.test(t)) return "Full";
     return "Blank";
+  }
+  // Does the Availability answer itself mention a stipulation ("available with restrictions", "with limitations")?
+  const mentionsStipulation = (v) => /restrict|limit|condition|stipulat|caveat|except/i.test(String(v || ""));
+  // Treat "no restrictions", "none", "N/A", "-" etc. as an empty answer
+  function cleanNote(v) {
+    const t = String(v == null ? "" : v).trim();
+    if (!t || !/[a-z0-9]/i.test(t)) return "";
+    // Empty if every word is a "nothing to report" word: "No restrictions", "None at this time", "N/A - none", "no_restrictions"
+    const NONE_WORDS = /^(no|none|n\/a|na|not|applicable|nothing|nil|negative|restrictions?|limitations?|stipulations?|known|at|this|time|noted|currently|any|other|than|that|i|am|aware|of)$/;
+    const words = t.toLowerCase().replace(/[_]+/g, " ").split(/[^a-z\/]+/).filter(Boolean);
+    if (words.length && words.every((w) => NONE_WORDS.test(w))) return "";
+    return t;
+  }
+  /* Where a person is counted:
+     - Restrictions listed (real text, not "no restrictions")       → Partial / Restrictions
+     - Availability says partial                                     → Partial / Restrictions
+     - Says "available with restrictions" but marked no restrictions → look for a note in the
+       partial-dates answer; if there is one → Partial / Restrictions, otherwise → Full
+     - "Not available" stays out of the counts whatever else they wrote */
+  function classifyAvailability(availRaw, restrictions, dates) {
+    const base = classAvail(availRaw);
+    const isPartial = base === "Partial" || (mentionsStipulation(availRaw) && !!dates);
+    const hasRestr = !!restrictions;
+    if (base === "Unavailable") return { avail: "Unavailable", isPartial: false, hasRestr };
+    if (isPartial || hasRestr) return { avail: "Partial", isPartial, hasRestr };
+    return { avail: base, isPartial: false, hasRestr: false };
   }
   const classScope = (v) => (/emac/i.test(v || "") ? "EMAC" : "In-state");
   function classApproval(v) {
@@ -351,10 +379,10 @@
         name: [first, last].filter(Boolean).join(" ") || "(No name)",
         sortName: (last + " " + first).toLowerCase(),
         email, phone: val(r, "phone") || "", duration: val(r, "duration") || "",
-        availRaw: val(r, "availability") || "", avail: classAvail(val(r, "availability")),
+        availRaw: val(r, "availability") || "", avail: "Blank",
         scopeRaw: val(r, "scope") || "", scope: classScope(val(r, "scope")),
         approvalRaw: val(r, "approval") || "", approval: classApproval(val(r, "approval")),
-        dates: val(r, "partialDates") || "", restrictions: String(val(r, "restrictions") || "").trim(),
+        dates: cleanNote(val(r, "partialDates")), restrictions: cleanNote(val(r, "restrictions")),
         qualifiedRaw: val(r, "qualified") || "", quals: q.found,
         preferred: val(r, "preferred") || "",
         traineeRaw: val(r, "trainee") || "", trainee: matchPositions(val(r, "trainee")).found,
@@ -362,7 +390,7 @@
         regionRaw: val(r, "region") || "", region: classRegion(val(r, "region")),
         when, subNum, submissionId: val(r, "submissionId") || ""
       };
-      if (/^(none|n\/?a|no)$/i.test(p.restrictions)) p.restrictions = "";
+      Object.assign(p, classifyAvailability(p.availRaw, p.restrictions, p.dates));
       // Keep the most recently submitted entry; same timestamp → higher submission ID wins
       const prev = byKey[key];
       const newer = !prev || when > prev.when || (+when === +prev.when && subNum >= prev.subNum);
@@ -508,7 +536,7 @@
     const rows = gapRows();
     const gaps = rows.filter((r) => r.all === 0);
     const pending = available.filter((p) => p.approval !== "Yes" && !asg[p.id]).length;
-    const restr = available.filter((p) => p.restrictions && !asg[p.id]).length;
+    const restr = available.filter((p) => p.hasRestr && !asg[p.id]).length;
     const regionNote = S.regions.size < REGIONS.length ? "selected affiliations" : "all affiliations";
     const k = (label, val, cmp, cls = "") => `<div class="kpi ${cls}"><div class="k-label">${label}</div><div class="k-val">${val}</div><div class="k-cmp">${cmp}</div></div>`;
     $("kpis").innerHTML = [
@@ -532,8 +560,8 @@
         <tr><th class="grp-pos" rowspan="2">Code</th><th class="grp-pos" rowspan="2">Position — select to view personnel</th>
             <th class="grp-in" colspan="4">In-state only</th><th class="grp-em" colspan="4">EMAC / in-state</th>
             <th class="grp-all" rowspan="2">All<br>available</th><th class="grp-all" rowspan="2">Placed on<br>teams</th></tr>
-        <tr><th class="grp-in">Full</th><th class="grp-in">Partial</th><th class="grp-in">Not<br>stated</th><th class="grp-in">Deployable<br>total</th>
-            <th class="grp-em">Full</th><th class="grp-em">Partial</th><th class="grp-em">Not<br>stated</th><th class="grp-em">Deployable<br>total</th></tr>
+        <tr><th class="grp-in">Full</th><th class="grp-in">Partial /<br>Restrictions</th><th class="grp-in">Not<br>stated</th><th class="grp-in">Deployable<br>total</th>
+            <th class="grp-em">Full</th><th class="grp-em">Partial /<br>Restrictions</th><th class="grp-em">Not<br>stated</th><th class="grp-em">Deployable<br>total</th></tr>
       </thead>
       <tbody>${rows.map((r) => `
         <tr data-code="${r.pos.code}" tabindex="0">
@@ -569,10 +597,12 @@
     const a = asg[p.id];
     const tags = [
       `<span class="tag">${esc(p.region === "Unspecified" ? "Affiliation not stated" : p.region)}</span>`,
-      p.avail === "Full" ? `<span class="tag full">Full availability</span>` : p.avail === "Partial" ? `<span class="tag partial">Partial availability</span>` : `<span class="tag">Availability not stated</span>`,
+      p.avail === "Full" ? `<span class="tag full">Full availability</span>` : "",
+      p.isPartial ? `<span class="tag partial">Partial availability</span>` : "",
+      p.hasRestr ? `<span class="tag partial">Restrictions</span>` : "",
+      p.avail === "Blank" ? `<span class="tag">Availability not stated</span>` : "",
       p.scope === "EMAC" ? `<span class="tag emac">In-state & EMAC</span>` : `<span class="tag">In-state only</span>`,
       p.approval !== "Yes" ? `<span class="tag warn">Agency approval: ${esc(p.approvalRaw || "not answered")}</span>` : "",
-      p.restrictions ? `<span class="tag warn">Restrictions</span>` : "",
       p.dupes ? `<span class="tag">Latest of ${p.dupes + 1} submissions</span>` : "",
       a ? `<span class="tag asg">On ${esc(S.teams[a.team].name)} · ${esc(POS[a.code].label)}</span>` : ""
     ].join("");
@@ -581,6 +611,7 @@
       <div class="p-top"><span class="p-name">${esc(p.name)}</span><span class="sub">${esc(role)}</span></div>
       <div class="p-tags">${tags}</div>
       <dl>
+        ${row("Availability answer", p.availRaw)}
         ${row("Restrictions", p.restrictions)}
         ${row("Dates available", p.dates)}
         ${row("Response length", p.duration)}
@@ -646,7 +677,7 @@
   const filterSummary = () => {
     const parts = [];
     parts.push({ all: "All available (in-state or EMAC)", instate: "In-state only responders", emac: "EMAC-willing" }[S.mission]);
-    if (S.avail !== "all") parts.push(S.avail === "Full" ? "Full availability only" : "Partial availability only");
+    if (S.avail !== "all") parts.push(S.avail === "Full" ? "Full availability only" : "Partial availability / restrictions only");
     parts.push(S.regions.size < REGIONS.length ? "Affiliation: " + [...S.regions].map((r) => (r === "Unspecified" ? "Not stated" : r)).join(", ") : "All affiliations");
     return parts.join(" · ");
   };
@@ -715,7 +746,8 @@
     const x = (v) => L + (v / xmax) * plotW;
     let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#fcfcfb"/>`;
     if (forExport) s += exportHeader("Available personnel by team affiliation", `${incidentLabel()} · ${filterSummary()} · ${stampText()}`, W);
-    s += legend(levels.map((a) => [AVAIL_LABEL[a] + " availability", AVAIL_COLOR[a]]), L, top - 14);
+    const LEG = { Full: "Full availability", Partial: "Partial availability / restrictions", Blank: "Availability not stated" };
+    s += legend(levels.map((a) => [LEG[a], AVAIL_COLOR[a]]), L, top - 14);
     const plotBottom = top + data.length * rowH;
     tk.forEach((v) => { s += `<line x1="${x(v)}" x2="${x(v)}" y1="${top}" y2="${plotBottom}" stroke="${v ? "#ecebe6" : "#b9b7b0"}"/>` + T(x(v), plotBottom + 16, v, { size: 11, anchor: "middle", fill: "#8a8984" }); });
     data.forEach((d, i) => {
@@ -725,7 +757,7 @@
       const segs = levels.filter((a) => d.by[a] > 0);
       segs.forEach((a, k) => {
         const v = d.by[a], x0 = x(acc) + (k > 0 ? 2 : 0), w = x(acc + v) - x(acc) - (k > 0 ? 2 : 0);
-        s += `<path class="seg" d="${hbarPath(x0, yy, Math.max(0, w), h, k === segs.length - 1 ? 4 : 0)}" fill="${AVAIL_COLOR[a]}" data-tip="${esc(`${d.r === "Unspecified" ? "Affiliation not stated" : d.r}\n${AVAIL_LABEL[a]} availability: ${v}\nTotal: ${d.total}`)}"/>`;
+        s += `<path class="seg" d="${hbarPath(x0, yy, Math.max(0, w), h, k === segs.length - 1 ? 4 : 0)}" fill="${AVAIL_COLOR[a]}" data-tip="${esc(`${d.r === "Unspecified" ? "Affiliation not stated" : d.r}\n${LEG[a]}: ${v}\nTotal: ${d.total}`)}"/>`;
         acc += v;
       });
       s += T(x(d.total) + 8, yy + h / 2 + 4, `${d.total} people`, { size: 12, fill: "#0b0b0b", weight: 650 }) +
@@ -801,10 +833,18 @@
   }
 
   const optLabel = (p) => {
-    const flags = [p.restrictions ? "⚠ restrictions" : "", p.approval !== "Yes" ? "⚠ approval" : ""].filter(Boolean).join(" ");
-    return `${p.last || p.name}${p.last ? ", " + p.first : ""} — ${p.region === "Unspecified" ? "?" : p.region} · ${AVAIL_LABEL[p.avail]}${p.scope === "EMAC" ? " · EMAC" : ""}${flags ? " " + flags : ""}`;
+    const flags = p.approval !== "Yes" ? " ⚠ approval" : "";
+    return `${p.last || p.name}${p.last ? ", " + p.first : ""} — ${p.region === "Unspecified" ? "?" : p.region} · ${availText(p)}${p.scope === "EMAC" ? " · EMAC" : ""}${flags}`;
   };
-  const footText = (p) => [p.region === "Unspecified" ? "Affiliation n/s" : p.region, AVAIL_LABEL[p.avail] + (p.avail === "Partial" && p.dates ? ": " + p.dates : ""), p.scope === "EMAC" ? "EMAC" : ""].filter(Boolean).join(" · ");
+  // Full / Partial / Restrictions — both shown when both apply
+  function availText(p, withDates) {
+    if (p.avail !== "Partial") return AVAIL_SHORT[p.avail];
+    const parts = [];
+    if (p.isPartial) parts.push("Partial" + (withDates && p.dates ? ": " + p.dates : ""));
+    if (p.hasRestr) parts.push("Restrictions");
+    return parts.join(" + ");
+  }
+  const footText = (p) => [p.region === "Unspecified" ? "Affiliation n/s" : p.region, availText(p, true), p.scope === "EMAC" ? "EMAC" : ""].filter(Boolean).join(" · ");
 
   function renderTeamTabs() {
     $("teamTabs").innerHTML = S.teams.map((t, i) =>
@@ -881,7 +921,7 @@
     const hy = 76;
     s += `<rect x="460" y="${hy}" width="250" height="22" fill="#2a6bb8"/>` + T(585, hy + 15, "In-state only", { size: 12, anchor: "middle", fill: "#fff", weight: 650 });
     s += `<rect x="720" y="${hy}" width="250" height="22" fill="#14213d"/>` + T(845, hy + 15, "EMAC / in-state", { size: 12, anchor: "middle", fill: "#fff", weight: 650 });
-    const sub = ["Code", "Position", "Full", "Partial", "N/S", "Total", "Full", "Partial", "N/S", "Total", "All avail."];
+    const sub = ["Code", "Position", "Full", "Part./Restr.", "N/S", "Total", "Full", "Part./Restr.", "N/S", "Total", "All avail."];
     sub.forEach((h, i) => (s += T(i < 2 ? colX[i] : colX[i] + 25, top - 8, h, { size: 11.5, anchor: i < 2 ? "start" : "middle", fill: "#52514e", weight: 650 })));
     s += `<line x1="20" x2="${W - 20}" y1="${top}" y2="${top}" stroke="#8a8984"/>`;
     rows.forEach((r, i) => {
