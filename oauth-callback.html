@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Signing in…</title>
+  <script>
+    // Receives the ArcGIS OAuth response in the sign-in pop-up and hands it back
+    // to the page that opened it (ArcGIS Maps SDK for JavaScript 4.x pattern).
+    function loadHandler() {
+      if (window.opener) {
+        if (location.hash) {
+          if (typeof opener.require === "function" && opener.require("esri/kernel")) {
+            opener.require("esri/kernel").id.setOAuthResponseHash(location.hash);
+          } else {
+            opener.dispatchEvent(new CustomEvent("arcgis:auth:hash", { detail: location.hash }));
+          }
+          close();
+        } else if (location.search) {
+          opener.dispatchEvent(new CustomEvent("arcgis:auth:location:search", { detail: location.search }));
+          close();
+        }
+      } else {
+        close();
+      }
+    }
+  </script>
+</head>
+<body onload="loadHandler();" style="font-family:system-ui,sans-serif;color:#52514e;padding:24px">
+  Completing sign-in… this window will close automatically.
+</body>
+</html>

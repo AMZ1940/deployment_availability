@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deployment Availability — Team Development</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ============ SIGN-IN GATE ============ -->
+  <div id="gate" class="gate">
+    <div class="gate-card">
+      <div class="gate-badge">TD</div>
+      <h1>Deployment Availability</h1>
+      <p>Survey results for team development. Sign in with your ArcGIS account to continue.</p>
+      <button id="btnSignIn" class="btn btn-primary" disabled>Checking sign-in…</button>
+      <p id="gateMsg" class="gate-msg"></p>
+    </div>
+  </div>
+
+  <!-- ============ APP ============ -->
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <div class="topbar-left">
+        <span class="logo">TD</span>
+        <span class="topbar-title">Deployment Availability</span>
+      </div>
+      <div class="topbar-right">
+        <span id="userName" class="user"></span>
+        <button id="btnRefresh" class="btn btn-ghost" title="Reload survey results from ArcGIS">Refresh data</button>
+        <button id="btnPdf" class="btn btn-primary" title="PDF with summary, charts and every team's org chart">Briefing PDF</button>
+        <button id="btnSettings" class="btn btn-ghost" title="Data source and field matching">Settings</button>
+        <button id="btnSignOut" class="btn btn-ghost">Sign out</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <div id="demoBanner" class="demo-banner" hidden>Demo data — fictional names, not real survey results.</div>
+      <div id="loadMsg" class="load-msg" hidden></div>
+
+      <!-- Incident + filters -->
+      <section class="toolbar">
+        <label class="fld">Incident
+          <select id="selIncident"></select>
+        </label>
+        <div class="fld">Team affiliation
+          <div class="chips" id="regionChips"></div>
+        </div>
+        <div class="stamp" id="dataStamp"></div>
+      </section>
+
+      <!-- KPIs -->
+      <section class="kpi-row" id="kpis"></section>
+
+      <!-- Tabs -->
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="summary" role="tab">Position summary</button>
+        <button class="tab" data-tab="charts" role="tab">Charts</button>
+        <button class="tab" data-tab="org" role="tab">Team org chart</button>
+      </nav>
+
+      <!-- SUMMARY -->
+      <section class="panel" id="panel-summary">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>Position gap review</h2>
+              <p class="sub">Qualified personnel still available — people already placed on a team are removed. Select a position to see who can fill it.</p>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-light" id="btnTablePng">Download PNG</button>
+            </div>
+          </div>
+          <div class="table-wrap"><table class="gap" id="tblGap"></table></div>
+          <p class="foot-note" id="gapNote"></p>
+        </div>
+      </section>
+
+      <!-- CHARTS -->
+      <section class="panel" id="panel-charts" hidden>
+        <div class="filter-row">
+          <label class="fld">Deployment type
+            <select id="selMission">
+              <option value="all">All available (in-state or EMAC)</option>
+              <option value="instate">In-state only responders</option>
+              <option value="emac">Willing to deploy via EMAC</option>
+            </select>
+          </label>
+          <label class="fld">Availability
+            <select id="selAvail">
+              <option value="all">Full, partial and not stated</option>
+              <option value="Full">Full availability only</option>
+              <option value="Partial">Partial availability only</option>
+            </select>
+          </label>
+          <p class="sub filter-hint">Team affiliation chips above also apply to these charts.</p>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div><h2>Qualified personnel available by position</h2><p class="sub" id="chA_sub"></p></div>
+            <div class="card-actions"><button class="btn btn-light" data-png="A">Download PNG</button></div>
+          </div>
+          <div class="chart" id="chartA"></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div><h2>Available personnel by team affiliation</h2><p class="sub" id="chB_sub"></p></div>
+            <div class="card-actions"><button class="btn btn-light" data-png="B">Download PNG</button></div>
+          </div>
+          <div class="chart" id="chartB"></div>
+        </div>
+      </section>
+
+      <!-- ORG CHART -->
+      <section class="panel" id="panel-org" hidden>
+        <div class="team-bar">
+          <div class="team-tabs" id="teamTabs"></div>
+          <button class="btn btn-light" id="btnAddTeam">+ Add team</button>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div class="team-meta">
+              <label class="fld">Team name <input id="inpTeamName" type="text" maxlength="60"></label>
+              <label class="fld">Deployment type
+                <select id="selTeamMission">
+                  <option value="instate">In-state</option>
+                  <option value="emac">EMAC (only EMAC-willing personnel listed)</option>
+                </select>
+              </label>
+              <label class="chk"><input type="checkbox" id="chkShowAll"> List all available personnel, not just qualified</label>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-light" id="btnOrgPng">Download PNG</button>
+              <button class="btn btn-light" id="btnRoster">Roster (CSV)</button>
+              <button class="btn btn-light danger" id="btnClearTeam">Clear team</button>
+              <button class="btn btn-light danger" id="btnRemoveTeam">Remove team</button>
+            </div>
+          </div>
+          <div class="org-scroll"><div class="org" id="org"></div></div>
+          <p class="foot-note">Choosing a person removes them from the position summary, the charts and every other team's lists. Selections are saved in this browser for this incident.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Position drawer -->
+  <div id="drawerBack" class="drawer-back" hidden></div>
+  <aside id="drawer" class="drawer" hidden aria-label="Personnel for position">
+    <div class="drawer-head">
+      <div><p class="eyebrow" id="drCode"></p><h2 id="drTitle"></h2></div>
+      <button class="btn-x" id="drClose" aria-label="Close">×</button>
+    </div>
+    <div class="drawer-body" id="drBody"></div>
+  </aside>
+
+  <!-- Settings dialog -->
+  <dialog id="dlgSettings" class="dlg">
+    <form method="dialog">
+      <h2>Data source</h2>
+      <p class="sub">The hosted table or layer that holds the survey results. Paste its REST URL, ending in <code>/FeatureServer/0</code> (or the right layer number).</p>
+      <input id="inpLayerUrl" type="url" class="wide" placeholder="https://services.arcgis.com/…/FeatureServer/0">
+      <div class="dlg-actions">
+        <button class="btn btn-primary" id="btnSaveLayer" value="save">Save and load</button>
+        <button class="btn btn-light" id="btnDemo" value="demo">Load demo data</button>
+        <button class="btn btn-light" value="cancel">Close</button>
+      </div>
+      <h3>Field matching</h3>
+      <p class="sub">How the survey questions were matched to fields in the table. A blank row means that question wasn't found.</p>
+      <div class="table-wrap"><table class="tbl" id="tblFields"></table></div>
+      <p class="sub" id="unmatchedNote"></p>
+    </form>
+  </dialog>
+
+  <div id="tip" class="tip" hidden></div>
+  <div id="busy" class="busy" hidden><div class="spinner"></div><p id="busyMsg">Working…</p></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://js.arcgis.com/4.30/"></script>
+  <script src="sample-data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
