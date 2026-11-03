@@ -90,13 +90,16 @@ table.gap{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeri
 .gap td.code{font-weight:700;white-space:nowrap}
 .gap tbody tr{cursor:pointer}
 .gap tbody tr:hover td{background:#eef4fc}
-.gap td.pos{white-space:nowrap}
+.gap td.pos{white-space:nowrap;position:relative;padding-right:14px}
 .gap td.pos a{color:var(--ink);text-decoration:none;font-weight:500}
 .gap tbody tr:hover td.pos a{text-decoration:underline;color:#1c5cab}
-.gap td.pos .view{font-size:12px;color:#1c5cab;margin-left:6px;opacity:0}
+.gap td.pos .view{position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:12px;color:#1c5cab;background:#eef4fc;padding-left:6px;opacity:0}
 .gap tbody tr:hover td.pos .view{opacity:1}
 .gap td.pos-g{background:var(--good-bg);color:var(--good-ink)}
 .gap td.zero-t{background:var(--bad-bg);color:var(--bad-ink);font-weight:700}
+.gap td.trn{border-left:1px dashed #b9b7b0}
+.gap td.trn-on{background:#e6e3f8;color:#3a2f8f;font-weight:600}
+.gap thead th.trn-h{font-style:italic}
 .gap td.tot{font-weight:700;border-left:2px solid #8a8984}
 .gap td.muted{color:var(--ink-3)}
 .gap tfoot td{font-weight:700;background:#ecebe6}

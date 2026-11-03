@@ -430,7 +430,13 @@
     const asg = assignments();
     return POSITIONS.map((pos) => {
       const r = { pos, in: { Full: 0, Partial: 0, Blank: 0 }, em: { Full: 0, Partial: 0, Blank: 0 }, filled: 0 };
-      pool.forEach((p) => { if (p.quals.includes(pos.code)) (p.scope === "EMAC" ? r.em : r.in)[p.avail]++; });
+      r.inTr = 0; r.emTr = 0;
+      pool.forEach((p) => {
+        if (p.quals.includes(pos.code)) (p.scope === "EMAC" ? r.em : r.in)[p.avail]++;
+        // Trainee = open task book OR trained in this position, and not already qualified in it.
+        // Listed in both fields still counts once.
+        else if (p.trainee.includes(pos.code) || p.candidates.includes(pos.code)) p.scope === "EMAC" ? r.emTr++ : r.inTr++;
+      });
       r.inT = r.in.Full + r.in.Partial + r.in.Blank;
       r.emT = r.em.Full + r.em.Partial + r.em.Blank;
       r.all = r.inT + r.emT;
@@ -555,27 +561,28 @@
     const rows = gapRows();
     const cell = (v, total) => `<td class="num ${total ? "tot " : ""}${v > 0 ? "pos-g" : total ? "zero-t" : "muted"}">${v}</td>`;
     const tot = (f) => rows.reduce((a, r) => a + f(r), 0);
+    const trn = (v) => `<td class="num trn ${v > 0 ? "trn-on" : "muted"}">${v}</td>`;
     $("tblGap").innerHTML = `
       <thead>
         <tr><th class="grp-pos" rowspan="2">Code</th><th class="grp-pos" rowspan="2">Position — select to view personnel</th>
-            <th class="grp-in" colspan="4">In-state only</th><th class="grp-em" colspan="4">EMAC / in-state</th>
+            <th class="grp-in" colspan="5">In-state only</th><th class="grp-em" colspan="5">EMAC / in-state</th>
             <th class="grp-all" rowspan="2">All<br>available</th><th class="grp-all" rowspan="2">Placed on<br>teams</th></tr>
-        <tr><th class="grp-in">Full</th><th class="grp-in">Partial /<br>Restrictions</th><th class="grp-in">Not<br>stated</th><th class="grp-in">Deployable<br>total</th>
-            <th class="grp-em">Full</th><th class="grp-em">Partial /<br>Restrictions</th><th class="grp-em">Not<br>stated</th><th class="grp-em">Deployable<br>total</th></tr>
+        <tr><th class="grp-in">Full</th><th class="grp-in">Partial /<br>Restrictions</th><th class="grp-in">Not<br>stated</th><th class="grp-in">Deployable<br>total</th><th class="grp-in trn-h">Trainees</th>
+            <th class="grp-em">Full</th><th class="grp-em">Partial /<br>Restrictions</th><th class="grp-em">Not<br>stated</th><th class="grp-em">Deployable<br>total</th><th class="grp-em trn-h">Trainees</th></tr>
       </thead>
       <tbody>${rows.map((r) => `
         <tr data-code="${r.pos.code}" tabindex="0">
           <td class="code">${esc(r.pos.label)}</td>
-          <td class="pos"><a href="#" onclick="return false">${esc(r.pos.label)} – ${esc(r.pos.title)}</a><span class="view">View personnel ›</span></td>
-          ${cell(r.in.Full)}${cell(r.in.Partial)}${cell(r.in.Blank)}${cell(r.inT, true)}
-          ${cell(r.em.Full)}${cell(r.em.Partial)}${cell(r.em.Blank)}${cell(r.emT, true)}
+          <td class="pos"><a href="#" onclick="return false" title="View personnel">${esc(r.pos.title)} ›</a></td>
+          ${cell(r.in.Full)}${cell(r.in.Partial)}${cell(r.in.Blank)}${cell(r.inT, true)}${trn(r.inTr)}
+          ${cell(r.em.Full)}${cell(r.em.Partial)}${cell(r.em.Blank)}${cell(r.emT, true)}${trn(r.emTr)}
           ${cell(r.all, true)}
           <td class="num">${r.filled ? `<span class="badge-a">${r.filled}</span>` : `<span class="muted">–</span>`}</td>
         </tr>`).join("")}
       </tbody>
       <tfoot><tr><td></td><td>Total (a person is counted once for each position they're qualified in)</td>
-        <td class="num">${tot((r) => r.in.Full)}</td><td class="num">${tot((r) => r.in.Partial)}</td><td class="num">${tot((r) => r.in.Blank)}</td><td class="num tot">${tot((r) => r.inT)}</td>
-        <td class="num">${tot((r) => r.em.Full)}</td><td class="num">${tot((r) => r.em.Partial)}</td><td class="num">${tot((r) => r.em.Blank)}</td><td class="num tot">${tot((r) => r.emT)}</td>
+        <td class="num">${tot((r) => r.in.Full)}</td><td class="num">${tot((r) => r.in.Partial)}</td><td class="num">${tot((r) => r.in.Blank)}</td><td class="num tot">${tot((r) => r.inT)}</td><td class="num trn">${tot((r) => r.inTr)}</td>
+        <td class="num">${tot((r) => r.em.Full)}</td><td class="num">${tot((r) => r.em.Partial)}</td><td class="num">${tot((r) => r.em.Blank)}</td><td class="num tot">${tot((r) => r.emT)}</td><td class="num trn">${tot((r) => r.emTr)}</td>
         <td class="num tot">${tot((r) => r.all)}</td><td class="num">${tot((r) => r.filled)}</td></tr></tfoot>`;
     $("tblGap").querySelectorAll("tbody tr").forEach((tr) => {
       tr.onclick = () => openDrawer(tr.dataset.code);
@@ -584,7 +591,7 @@
     const noQual = S.people.filter((p) => p.avail !== "Unavailable" && !p.quals.length && S.regions.has(p.region)).length;
     const unm = Object.keys(S.unmatchedPositions);
     $("gapNote").innerHTML = [
-      "“Not stated” = the availability question was left blank. People who answered that they're not available, and entries with no name, are left out. A blank in-state/EMAC answer is counted as in-state only.",
+      "“Not stated” = the availability question was left blank. People who answered that they're not available, and entries with no name, are left out. A blank in-state/EMAC answer is counted as in-state only. “Trainees” = people with an open task book or trained in the position who aren't qualified in it; they're not included in the deployable totals.",
       (S.unnamed || []).length ? `${S.unnamed.length} ${S.unnamed.length === 1 ? "entry has" : "entries have"} no name listed and ${S.unnamed.length === 1 ? "is" : "are"} left out of all counts.` : "",
       noQual ? `${noQual} available ${noQual === 1 ? "person has" : "people have"} no qualified position listed; they appear only under “List all available personnel” on the org chart.` : "",
       unm.length ? `Qualified positions not on this org chart: ${esc(unm.slice(0, 6).join("; "))}${unm.length > 6 ? "…" : ""}.` : ""
@@ -913,36 +920,43 @@
 
   function tableSvg(forPdf) {
     const rows = gapRows();
-    const W = 1100, rowH = 26, top = 64 + 64, colX = [24, 120, 470, 530, 590, 650, 730, 790, 850, 910, 990];
+    const W = 1100, rowH = 26, top = 64 + 78, CW = 58;
+    const NX = [0, 1, 2, 3, 4, 5.25, 6.25, 7.25, 8.25, 9.25, 10.5].map((i) => 392 + i * CW);   // numeric column x
     const H = top + rowH * (rows.length + 1) + 40;
     let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#fff"/>`;
     s += exportHeader("Position gap review — qualified personnel still available", `${incidentLabel()} · ${S.regions.size < REGIONS.length ? "Affiliation: " + [...S.regions].join(", ") : "All affiliations"} · people already placed on teams removed · ${stampText()}`, W);
     // group headers
-    const hy = 76;
-    s += `<rect x="460" y="${hy}" width="250" height="22" fill="#2a6bb8"/>` + T(585, hy + 15, "In-state only", { size: 12, anchor: "middle", fill: "#fff", weight: 650 });
-    s += `<rect x="720" y="${hy}" width="250" height="22" fill="#14213d"/>` + T(845, hy + 15, "EMAC / in-state", { size: 12, anchor: "middle", fill: "#fff", weight: 650 });
-    const sub = ["Code", "Position", "Full", "Part./Restr.", "N/S", "Total", "Full", "Part./Restr.", "N/S", "Total", "All avail."];
-    sub.forEach((h, i) => (s += T(i < 2 ? colX[i] : colX[i] + 25, top - 8, h, { size: 11.5, anchor: i < 2 ? "start" : "middle", fill: "#52514e", weight: 650 })));
+    const hy = 76, gw = CW * 5 - 6;
+    s += `<rect x="${NX[0]}" y="${hy}" width="${gw}" height="22" fill="#2a6bb8"/>` + T(NX[0] + gw / 2, hy + 15, "In-state only", { size: 12, anchor: "middle", fill: "#fff", weight: 650 });
+    s += `<rect x="${NX[5]}" y="${hy}" width="${gw}" height="22" fill="#14213d"/>` + T(NX[5] + gw / 2, hy + 15, "EMAC / in-state", { size: 12, anchor: "middle", fill: "#fff", weight: 650 });
+    s += T(24, top - 10, "Code", { size: 11.5, fill: "#52514e", weight: 650 }) + T(110, top - 10, "Position", { size: 11.5, fill: "#52514e", weight: 650 });
+    const HDR = [["Full"], ["Partial /", "Restr."], ["Not", "stated"], ["Deploy.", "total"], ["Trainees"]];
+    const sub = [...HDR, ...HDR, ["All", "avail."]];
+    sub.forEach((lines, i) => lines.forEach((t, j) =>
+      (s += T(NX[i] + 26, top - 10 - (lines.length - 1 - j) * 13, t, { size: 11, anchor: "middle", fill: i === 4 || i === 9 ? "#3a2f8f" : "#52514e", weight: 650 }))));
     s += `<line x1="20" x2="${W - 20}" y1="${top}" y2="${top}" stroke="#8a8984"/>`;
+    const TOT_COLS = [3, 8, 10], TRN_COLS = [4, 9];
+    const getters = [(r) => r.in.Full, (r) => r.in.Partial, (r) => r.in.Blank, (r) => r.inT, (r) => r.inTr,
+                     (r) => r.em.Full, (r) => r.em.Partial, (r) => r.em.Blank, (r) => r.emT, (r) => r.emTr, (r) => r.all];
     rows.forEach((r, i) => {
       const y = top + i * rowH;
       if (i % 2) s += `<rect x="20" y="${y}" width="${W - 40}" height="${rowH}" fill="#f7f6f2"/>`;
-      s += T(colX[0], y + 17, r.pos.label, { size: 12, fill: "#0b0b0b", weight: 700 }) + T(colX[1], y + 17, r.pos.title, { size: 12, fill: "#0b0b0b" });
-      const vals = [r.in.Full, r.in.Partial, r.in.Blank, r.inT, r.em.Full, r.em.Partial, r.em.Blank, r.emT, r.all];
-      vals.forEach((v, k) => {
-        const isT = k === 3 || k === 7 || k === 8, x = colX[k + 2];
-        if (v > 0) s += `<rect x="${x + 3}" y="${y + 3}" width="44" height="${rowH - 6}" rx="3" fill="#dcf2e6"/>`;
-        else if (isT) s += `<rect x="${x + 3}" y="${y + 3}" width="44" height="${rowH - 6}" rx="3" fill="#fbdcdc"/>`;
-        s += T(x + 25, y + 17, v, { size: 12, anchor: "middle", fill: v > 0 ? "#14532d" : isT ? "#8a1c1c" : "#8a8984", weight: isT ? 700 : 400 });
+      s += T(24, y + 17, r.pos.label, { size: 12, fill: "#0b0b0b", weight: 700 }) + T(110, y + 17, r.pos.title, { size: 12, fill: "#0b0b0b" });
+      getters.forEach((g, k) => {
+        const v = g(r), x = NX[k], isT = TOT_COLS.includes(k), isTr = TRN_COLS.includes(k);
+        if (isTr) { if (v > 0) s += `<rect x="${x + 4}" y="${y + 3}" width="44" height="${rowH - 6}" rx="3" fill="#e6e3f8"/>`; }
+        else if (v > 0) s += `<rect x="${x + 4}" y="${y + 3}" width="44" height="${rowH - 6}" rx="3" fill="#dcf2e6"/>`;
+        else if (isT) s += `<rect x="${x + 4}" y="${y + 3}" width="44" height="${rowH - 6}" rx="3" fill="#fbdcdc"/>`;
+        const fill = isTr ? (v > 0 ? "#3a2f8f" : "#8a8984") : v > 0 ? "#14532d" : isT ? "#8a1c1c" : "#8a8984";
+        s += T(x + 26, y + 17, v, { size: 12, anchor: "middle", fill, weight: isT ? 700 : 400 });
       });
     });
     const yb = top + rows.length * rowH;
     s += `<line x1="20" x2="${W - 20}" y1="${yb}" y2="${yb}" stroke="#8a8984"/>`;
     const tot = (f) => rows.reduce((a, r) => a + f(r), 0);
-    s += T(colX[1], yb + 17, "Total (people counted once per qualified position)", { size: 12, fill: "#0b0b0b", weight: 650 });
-    [(r) => r.in.Full, (r) => r.in.Partial, (r) => r.in.Blank, (r) => r.inT, (r) => r.em.Full, (r) => r.em.Partial, (r) => r.em.Blank, (r) => r.emT, (r) => r.all]
-      .forEach((f, k) => (s += T(colX[k + 2] + 25, yb + 17, tot(f), { size: 12, anchor: "middle", fill: "#0b0b0b", weight: 700 })));
-    s += T(24, H - 12, "N/S = availability not stated. Green = at least one person available; red = no one available for that position.", { size: 11, fill: "#8a8984" });
+    s += T(110, yb + 17, "Total (counted once per position)", { size: 12, fill: "#0b0b0b", weight: 650 });
+    getters.forEach((g, k) => (s += T(NX[k] + 26, yb + 17, tot(g), { size: 12, anchor: "middle", fill: "#0b0b0b", weight: 700 })));
+    s += T(24, H - 12, "Green = at least one qualified person available; red = no one available. Trainees (task book or trained in, not yet qualified) are not in the deployable totals.", { size: 11, fill: "#8a8984" });
     return s + "</svg>";
   }
 
