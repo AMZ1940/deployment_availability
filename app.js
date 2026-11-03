@@ -304,7 +304,7 @@
     const inc = {};
     rows.forEach((r) => {
       const name = String(val(r, "incident") || "").trim() || "(No incident description)";
-      const d = toDate(val(r, "updated")) || toDate(val(r, "submitted")) || new Date(0);
+      const d = toDate(val(r, "submitted")) || toDate(val(r, "updated")) || new Date(0);
       if (!inc[name]) inc[name] = { name, count: 0, latest: d };
       inc[name].count++;
       if (d > inc[name].latest) inc[name].latest = d;
@@ -331,8 +331,16 @@
         const parts = String(val(r, "fullName")).trim().split(/\s+/); first = parts.shift() || ""; last = parts.join(" ");
       }
       const email = String(val(r, "email") || "").trim().toLowerCase();
-      const key = email || String(val(r, "submitterId") || "") || norm(first + last) || String(val(r, "submissionId") || Math.random());
-      const when = toDate(val(r, "updated")) || toDate(val(r, "submitted")) || new Date(0);
+      // Duplicates are matched on first + last name (ignoring case, spaces and punctuation).
+      // Only if both names are blank do we fall back to email, then submitter ID.
+      const nameKey = norm(first) + "|" + norm(last);
+      const key = nameKey !== "|" ? "name:" + nameKey
+                : email ? "email:" + email
+                : String(val(r, "submitterId") || "") ? "sub:" + val(r, "submitterId")
+                : "row:" + String(val(r, "submissionId") || Math.random());
+      // "Most recent" = latest Submitted date (falls back to Updated if Submitted is blank)
+      const when = toDate(val(r, "submitted")) || toDate(val(r, "updated")) || new Date(0);
+      const subNum = Number(val(r, "submissionId")) || 0;
       const q = matchPositions(val(r, "qualified"));
       q.unmatched.forEach((u) => (S.unmatchedPositions[u] = (S.unmatchedPositions[u] || 0) + 1));
       const p = {
@@ -349,11 +357,14 @@
         traineeRaw: val(r, "trainee") || "", trainee: matchPositions(val(r, "trainee")).found,
         candidatesRaw: val(r, "candidates") || "", candidates: matchPositions(val(r, "candidates")).found,
         regionRaw: val(r, "region") || "", region: classRegion(val(r, "region")),
-        when, submissionId: val(r, "submissionId") || ""
+        when, subNum, submissionId: val(r, "submissionId") || ""
       };
       if (/^(none|n\/?a|no)$/i.test(p.restrictions)) p.restrictions = "";
-      if (!byKey[key] || when >= byKey[key].when) { p.dupes = byKey[key] ? (byKey[key].dupes || 0) + 1 : 0; byKey[key] = p; }
-      else byKey[key].dupes = (byKey[key].dupes || 0) + 1;
+      // Keep the most recently submitted entry; same timestamp → higher submission ID wins
+      const prev = byKey[key];
+      const newer = !prev || when > prev.when || (+when === +prev.when && subNum >= prev.subNum);
+      if (newer) { p.dupes = prev ? (prev.dupes || 0) + 1 : 0; byKey[key] = p; }
+      else prev.dupes = (prev.dupes || 0) + 1;
     });
     S.people = Object.values(byKey).sort((a, b) => a.sortName.localeCompare(b.sortName));
     S.byId = Object.fromEntries(S.people.map((p) => [p.id, p]));
@@ -557,6 +568,7 @@
       p.scope === "EMAC" ? `<span class="tag emac">In-state & EMAC</span>` : `<span class="tag">In-state only</span>`,
       p.approval !== "Yes" ? `<span class="tag warn">Agency approval: ${esc(p.approvalRaw || "not answered")}</span>` : "",
       p.restrictions ? `<span class="tag warn">Restrictions</span>` : "",
+      p.dupes ? `<span class="tag">Latest of ${p.dupes + 1} submissions</span>` : "",
       a ? `<span class="tag asg">On ${esc(S.teams[a.team].name)} · ${esc(POS[a.code].label)}</span>` : ""
     ].join("");
     const row = (k, v) => (v ? `<dt>${k}</dt><dd>${esc(v)}</dd>` : "");
@@ -567,6 +579,7 @@
         ${row("Restrictions", p.restrictions)}
         ${row("Dates available", p.dates)}
         ${row("Response length", p.duration)}
+        ${row("Submitted", p.when && +p.when ? p.when.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "")}
         ${row("Qualified", p.qualifiedRaw)}
         ${row("Preferred", p.preferred)}
         ${row("Trainee task book", p.traineeRaw)}
