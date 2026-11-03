@@ -323,6 +323,7 @@
       (String(val(r, "incident") || "").trim() || "(No incident description)") === S.incident);
     const byKey = {};
     S.unmatchedPositions = {};
+    S.unnamed = [];          // entries with no first or last name — left out of every count
     rows.forEach((r) => {
       const status = String(val(r, "status") || "");
       if (/draft|deleted|cancel/i.test(status)) return;
@@ -330,6 +331,8 @@
       if (!first && !last && val(r, "fullName")) {
         const parts = String(val(r, "fullName")).trim().split(/\s+/); first = parts.shift() || ""; last = parts.join(" ");
       }
+      // No name listed (both name fields blank, or only punctuation) → not counted, like "not available"
+      if (!norm(first) && !norm(last)) { S.unnamed.push({ region: classRegion(val(r, "region")) }); return; }
       const email = String(val(r, "email") || "").trim().toLowerCase();
       // Duplicates are matched on first + last name (ignoring case, spaces and punctuation).
       // Only if both names are blank do we fall back to email, then submitter ID.
@@ -497,6 +500,7 @@
   /* ================================================================== KPIs */
   function renderKpis() {
     const inRegion = S.people.filter((p) => S.regions.has(p.region));
+    const unnamed = (S.unnamed || []).filter((u) => S.regions.has(u.region)).length;
     const available = inRegion.filter((p) => p.avail !== "Unavailable");
     const asg = assignments();
     const assigned = available.filter((p) => asg[p.id]).length;
@@ -508,7 +512,7 @@
     const regionNote = S.regions.size < REGIONS.length ? "selected affiliations" : "all affiliations";
     const k = (label, val, cmp, cls = "") => `<div class="kpi ${cls}"><div class="k-label">${label}</div><div class="k-val">${val}</div><div class="k-cmp">${cmp}</div></div>`;
     $("kpis").innerHTML = [
-      k("Responses", inRegion.length, regionNote),
+      k("Responses", inRegion.length, unnamed ? `${regionNote} · ${unnamed} without a name not counted` : regionNote),
       k("Available", available.length, `${inRegion.length - available.length} not available`),
       k("Placed on teams", assigned, `${S.teams.length} team${S.teams.length > 1 ? "s" : ""}`),
       k("Still available", remaining, "unique people"),
@@ -552,7 +556,8 @@
     const noQual = S.people.filter((p) => p.avail !== "Unavailable" && !p.quals.length && S.regions.has(p.region)).length;
     const unm = Object.keys(S.unmatchedPositions);
     $("gapNote").innerHTML = [
-      "“Not stated” = the availability question was left blank. People who answered that they're not available are left out. A blank in-state/EMAC answer is counted as in-state only.",
+      "“Not stated” = the availability question was left blank. People who answered that they're not available, and entries with no name, are left out. A blank in-state/EMAC answer is counted as in-state only.",
+      (S.unnamed || []).length ? `${S.unnamed.length} ${S.unnamed.length === 1 ? "entry has" : "entries have"} no name listed and ${S.unnamed.length === 1 ? "is" : "are"} left out of all counts.` : "",
       noQual ? `${noQual} available ${noQual === 1 ? "person has" : "people have"} no qualified position listed; they appear only under “List all available personnel” on the org chart.` : "",
       unm.length ? `Qualified positions not on this org chart: ${esc(unm.slice(0, 6).join("; "))}${unm.length > 6 ? "…" : ""}.` : ""
     ].filter(Boolean).join(" ");
