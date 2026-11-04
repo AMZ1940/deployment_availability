@@ -696,7 +696,7 @@
   const DH = () => 64 - HB();                     // how much shorter than the PNG version
   function exportHeader(title, sub, W) {
     if (PDF_MODE) return `<rect width="${W}" height="${HB()}" fill="${BRAND.navy}"/><rect width="8" height="${HB()}" fill="${BRAND.red}"/>` + T(24, 28, title, { size: 18, fill: "#fff", weight: 650 });
-    return `<rect width="${W}" height="64" fill="${BRAND.navy}"/><rect width="8" height="64" fill="${BRAND.red}"/>` +
+    return `<rect width="${W}" height="64" fill="#14213d"/>` +
       T(24, 30, title, { size: 18, fill: "#fff", weight: 650 }) + T(24, 50, sub, { size: 12, fill: "#c9d3e6" });
   }
   const filterSummary = () => {
@@ -956,7 +956,7 @@
     const filled = Object.keys(team.slots).length, nTr = Object.keys(team.trainees || {}).length;
     const loc = String(team.location || "").trim();
     const hb = HB();
-    s += `<rect width="${W}" height="${hb}" fill="${BRAND.navy}"/><rect width="8" height="${hb}" fill="${BRAND.red}"/>` + T(24, PDF_MODE ? 28 : 30, `${team.name} — Incident Management Team`, { size: 18, fill: "#fff", weight: 650 }) +
+    s += `<rect width="${W}" height="${hb}" fill="${PDF_MODE ? BRAND.navy : "#14213d"}"/>` + (PDF_MODE ? `<rect width="8" height="${hb}" fill="${BRAND.red}"/>` : "") + T(24, PDF_MODE ? 28 : 30, `${team.name} — Incident Management Team`, { size: 18, fill: "#fff", weight: 650 }) +
          (PDF_MODE ? "" : T(24, 50, `${filled} of ${POSITIONS.length} positions filled${nTr ? ` · ${nTr} trainee${nTr > 1 ? "s" : ""}` : ""} · ${stampText()}`, { size: 12, fill: "#c9d3e6" }));
     // Team information band: incident, deployment location, deployment type
     const band = (x, label, value, empty) =>
@@ -1055,21 +1055,8 @@
     const a = document.createElement("a"); a.href = url; a.download = name;
     document.body.appendChild(a); a.click(); a.remove();
   }
-  // PNG downloads: add a white TEMA banner (color logo + red/navy rule) above the image, like the PDF pages
-  function brandWrap(svg, logo) {
-    const m = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
-    const W = +m[1], H = +m[2], BAND = 78;
-    const inner = svg.replace(/^<svg /, `<svg x="0" y="${BAND}" `);
-    const lh = 44, lw = logo ? lh * logo.w / logo.h : 0;
-    return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${W} ${H + BAND}" width="${W}" height="${H + BAND}">` +
-      `<rect width="${W}" height="${H + BAND}" fill="#fff"/>` +
-      (logo ? `<image x="20" y="13" width="${lw}" height="${lh}" href="${logo.url}" xlink:href="${logo.url}"/>` : T(20, 44, "Tennessee Emergency Management Authority", { size: 16, fill: BRAND.navy, weight: 700 })) +
-      T(W - 20, 40, "Deployment Availability", { size: 17, fill: BRAND.navy, weight: 700, anchor: "end" }) +
-      `<rect x="20" y="${BAND - 12}" width="${W - 40}" height="3.5" fill="${BRAND.red}"/><rect x="20" y="${BAND - 7}" width="${W - 40}" height="1" fill="${BRAND.navy}"/>` +
-      inner + `</svg>`;
-  }
   async function downloadSvgPng(svg, name) {
-    try { const logo = await getLogo(); const r = await svgToPng(brandWrap(svg, logo)); download(r.url, name); }
+    try { const r = await svgToPng(svg); download(r.url, name); }
     catch (e) { console.error(e); showLoadMsg("Couldn't create the image in this browser.", true); }
   }
 
