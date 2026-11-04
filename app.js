@@ -181,70 +181,201 @@
     unmatchedPositions: {}
   };
 
-  /* ================================================================== AUTH */
+  /* ================================================================== AUTH
+     OAuth 2.0 authorization code + PKCE, done directly (no ArcGIS Maps SDK).
+     - Standalone tab: full-page redirect to ArcGIS sign-in and back.
+     - Inside Experience Builder (iframe): the sign-in window is opened in the same
+       instant as the click, so pop-up blockers allow it. The window returns to this
+       site, which hands the code back to the embedded page and closes itself.
+     - Stays signed in: the refresh token keeps the session alive for up to 14 days,
+       so most visits need no sign-in at all. */
+  const AUTH = {
+    authorizeUrl: CONFIG.PORTAL_URL + "/sharing/rest/oauth2/authorize",
+    tokenUrl: CONFIG.PORTAL_URL + "/sharing/rest/oauth2/token",
+    selfUrl: CONFIG.PORTAL_URL + "/sharing/rest/community/self",
+    // Must match a Redirect URL on the OAuth credential, e.g. https://amz1940.github.io/deployment_availability/
+    redirectUri: new URL("./", window.location.href).href,
+    expirationMinutes: 20160,          // refresh-token lifetime (max 14 days)
+    refreshBufferMs: 5 * 60 * 1000,    // refresh the access token 5 minutes before it expires
+    tokenKey: "deploy:token:" + CONFIG.CLIENT_ID,
+    msgType: "deploy_avail_oauth"
+  };
   const btnSignIn = $("btnSignIn");
   const gateMsg = (m) => ($("gateMsg").textContent = m || "");
-  let esriIdRef = null, esriRequest = null;
+  let TOKEN = null;
 
-  function startAuth() {
-    if (isLocalPreview) return showApp("Local preview (no sign-in)");
-    if (typeof window.require !== "function") {
-      btnSignIn.textContent = "Sign-in unavailable";
-      gateMsg("Could not load the ArcGIS Maps SDK. Check your network connection and reload.");
-      return;
+  const isInIframe = () => { try { return window.self !== window.top; } catch (e) { return true; } };
+  const b64url = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const randomString = (n = 48) => b64url(crypto.getRandomValues(new Uint8Array(n)));
+  const sha256 = async (str) => b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str)));
+
+  function loadToken() { const t = store.get(AUTH.tokenKey); return t && t.accessToken ? t : null; }
+  function saveToken(t) { TOKEN = t; store.set(AUTH.tokenKey, t); }
+  function clearToken() { TOKEN = null; try { localStorage.removeItem(AUTH.tokenKey); } catch (e) {} }
+  function tokenFromResponse(d) {
+    const now = Date.now();
+    return {
+      accessToken: d.access_token,
+      refreshToken: d.refresh_token || (TOKEN && TOKEN.refreshToken) || null,
+      expiresAt: now + (Number(d.expires_in) || 1800) * 1000,
+      refreshExpiresAt: d.refresh_token_expires_in ? now + Number(d.refresh_token_expires_in) * 1000 : (TOKEN && TOKEN.refreshExpiresAt) || null,
+      username: d.username || (TOKEN && TOKEN.username) || null
+    };
+  }
+  async function postForm(url, params) {
+    const res = await fetch(url, { method: "POST", body: new URLSearchParams(params) });
+    return res.json();
+  }
+
+  // PKCE values are kept in this page's sessionStorage until the code comes back
+  let preparedUrl = null;   // a sign-in URL built ahead of time (its PKCE values are the ones in storage)
+  async function buildAuthorizeUrl() {
+    const verifier = randomString(48), state = randomString(16);
+    sessionStorage.setItem("deploy_oauth_verifier", verifier);
+    sessionStorage.setItem("deploy_oauth_state", state);
+    const q = new URLSearchParams({
+      client_id: CONFIG.CLIENT_ID, response_type: "code", redirect_uri: AUTH.redirectUri,
+      code_challenge: await sha256(verifier), code_challenge_method: "S256",
+      expiration: String(AUTH.expirationMinutes), state
+    });
+    return AUTH.authorizeUrl + "?" + q;
+  }
+  async function exchangeCode(code) {
+    const verifier = sessionStorage.getItem("deploy_oauth_verifier");
+    if (!verifier) throw new Error("Sign-in expired — please click Sign in again.");
+    const d = await postForm(AUTH.tokenUrl, { client_id: CONFIG.CLIENT_ID, grant_type: "authorization_code", code, redirect_uri: AUTH.redirectUri, code_verifier: verifier, f: "json" });
+    if (d.error) throw new Error((d.error.details && d.error.details[0]) || d.error.message || d.error_description || "Sign-in failed");
+    if (!d.access_token) throw new Error("ArcGIS did not return an access token.");
+    sessionStorage.removeItem("deploy_oauth_verifier"); sessionStorage.removeItem("deploy_oauth_state");
+    return tokenFromResponse(d);
+  }
+  async function ensureFreshToken() {
+    if (!TOKEN) throw new Error("Not signed in");
+    if (TOKEN.expiresAt && Date.now() < TOKEN.expiresAt - AUTH.refreshBufferMs) return;
+    if (!TOKEN.refreshToken || (TOKEN.refreshExpiresAt && Date.now() > TOKEN.refreshExpiresAt)) throw new Error("Session expired");
+    const d = await postForm(AUTH.tokenUrl, { client_id: CONFIG.CLIENT_ID, grant_type: "refresh_token", refresh_token: TOKEN.refreshToken, f: "json" });
+    if (d.error || !d.access_token) throw new Error("Session expired");
+    saveToken(tokenFromResponse(d));
+  }
+  // ArcGIS REST request with the signed-in user's token
+  async function agsRequest(url, params = {}) {
+    try { await ensureFreshToken(); }
+    catch (e) { clearToken(); showGate("Your ArcGIS session has expired. Please sign in again."); throw new Error("Signed out"); }
+    const d = await postForm(url, Object.assign({ f: "json", token: TOKEN.accessToken }, params));
+    if (d && d.error && (d.error.code === 498 || d.error.code === 499)) {
+      clearToken(); showGate("Your ArcGIS session has expired. Please sign in again."); throw new Error("Signed out");
     }
-    window.require(["esri/identity/OAuthInfo", "esri/identity/IdentityManager", "esri/portal/Portal", "esri/request"],
-      (OAuthInfo, esriId, Portal, request) => {
-        esriIdRef = esriId; esriRequest = request;
-        let inIframe = false;
-        try { inIframe = window.self !== window.top; } catch (e) { inIframe = true; }
-        const info = new OAuthInfo({
-          appId: CONFIG.CLIENT_ID,
-          portalUrl: CONFIG.PORTAL_URL,
-          popup: inIframe,                                            // pop-up inside Experience Builder, redirect otherwise
-          popupCallbackUrl: new URL("oauth-callback.html", window.location.href).href,
-          flowType: "auto"                                            // authorization code + PKCE
-        });
-        esriId.registerOAuthInfos([info]);
-        const sharingUrl = info.portalUrl + "/sharing";
+    return d;
+  }
 
-        const onSignedIn = () => {
-          const portal = new Portal({ url: CONFIG.PORTAL_URL, authMode: "immediate" });
-          return portal.load()
-            .then(() => showApp(portal.user ? (portal.user.fullName || portal.user.username) : "Signed in"))
-            .catch(() => showApp("Signed in"));
-        };
-        const resetButton = () => { btnSignIn.disabled = false; btnSignIn.textContent = "Sign in with ArcGIS"; };
-        const showNewTabOption = () => {
-          if (!inIframe || $("newTabLink")) return;
-          $("gateMsg").insertAdjacentHTML("afterend",
-            `<p style="font-size:13px">Pop-up didn't open? <a id="newTabLink" href="${esc(window.location.href.split("#")[0])}" target="_blank" rel="noopener">Open in a new tab</a></p>`);
-        };
-        btnSignIn.onclick = () => {
-          gateMsg("");
-          btnSignIn.disabled = true;
-          btnSignIn.textContent = inIframe ? "Complete sign-in in the pop-up…" : "Redirecting to ArcGIS…";
-          const stuck = setTimeout(() => {
-            resetButton();
-            if (inIframe) { gateMsg("Still waiting on the ArcGIS sign-in window. If it was blocked, allow pop-ups and try again."); showNewTabOption(); }
-          }, 20000);
-          esriId.getCredential(sharingUrl)
-            .then(() => { clearTimeout(stuck); return onSignedIn(); })
-            .catch((e) => {
-              clearTimeout(stuck);
-              console.warn("ArcGIS sign-in error", e);
-              resetButton();
-              gateMsg(e && e.message ? e.message : "Sign-in was cancelled.");
-              showNewTabOption();
-            });
-        };
-        esriId.checkSignInStatus(sharingUrl).then(onSignedIn).catch(resetButton);
-      },
-      (err) => gateMsg("ArcGIS SDK failed to load: " + (err && err.message)));
+  // The page ArcGIS sends the user back to (…/deployment_availability/?code=…)
+  // Returns "popup" if this window only relays the code and closes.
+  async function handleCallback() {
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get("code"), error = url.searchParams.get("error"), state = url.searchParams.get("state");
+    if (!code && !error) return "none";
+    if (window.opener && window.opener !== window) {
+      try { window.opener.postMessage({ type: AUTH.msgType, code, state, error, error_description: url.searchParams.get("error_description") }, window.location.origin); }
+      catch (e) { console.error(e); }
+      document.body.innerHTML = '<div style="font-family:system-ui,sans-serif;padding:40px;text-align:center;color:#333">Sign-in complete. You can close this window.</div>';
+      setTimeout(() => { try { window.close(); } catch (e) {} }, 60);
+      return "popup";
+    }
+    history.replaceState({}, "", url.pathname);
+    if (error) { gateMsg("Sign-in error: " + (url.searchParams.get("error_description") || error)); return "error"; }
+    const expected = sessionStorage.getItem("deploy_oauth_state");
+    if (expected && state !== expected) { gateMsg("Sign-in failed (state mismatch). Please try again."); return "error"; }
+    try { saveToken(await exchangeCode(code)); return "ok"; }
+    catch (e) { console.error(e); gateMsg(e.message || "Sign-in failed."); return "error"; }
+  }
+
+  function waitForPopup(popup) {
+    let settled = false;
+    const done = () => { window.removeEventListener("message", onMsg); clearInterval(timer); };
+    const onMsg = async (ev) => {
+      if (ev.origin !== window.location.origin || !ev.data || ev.data.type !== AUTH.msgType) return;
+      settled = true; done();
+      if (ev.data.error) { resetSignIn(); gateMsg(ev.data.error_description || ev.data.error); return; }
+      const expected = sessionStorage.getItem("deploy_oauth_state");
+      if (expected && ev.data.state !== expected) { resetSignIn(); gateMsg("Sign-in failed (state mismatch). Please try again."); return; }
+      try { saveToken(await exchangeCode(ev.data.code)); await afterSignIn(); }
+      catch (e) { console.error(e); resetSignIn(); gateMsg(e.message || "Sign-in failed."); }
+    };
+    window.addEventListener("message", onMsg);
+    const timer = setInterval(() => { if (popup.closed && !settled) { done(); resetSignIn(); prepareUrl(); } }, 500);
+  }
+
+  function resetSignIn() { btnSignIn.disabled = false; btnSignIn.textContent = "Sign in with ArcGIS"; }
+  // Build the next sign-in URL in advance so the click only has to open the window
+  function prepareUrl() { preparedUrl = buildAuthorizeUrl(); preparedUrl.catch(() => (preparedUrl = null)); }
+
+  // Click handler — must stay synchronous up to window.open so the browser treats it as user-initiated
+  function startSignIn() {
+    gateMsg("");
+    if (isInIframe()) {
+      const w = 520, h = 700;
+      const popup = window.open("about:blank", "deploy_avail_signin",
+        `width=${w},height=${h},left=${Math.max(0, (screen.width - w) / 2)},top=${Math.max(0, (screen.height - h) / 2)},scrollbars=1`);
+      if (!popup) { gateMsg("The sign-in window was blocked. Use “Open in a new tab” below."); return; }
+      try { popup.document.write('<!doctype html><meta charset="utf-8"><title>Signing in…</title><div style="font-family:system-ui,sans-serif;padding:40px;text-align:center;color:#333">Connecting to ArcGIS Online…</div>'); } catch (e) {}
+      btnSignIn.disabled = true; btnSignIn.textContent = "Complete sign-in in the window…";
+      const urlP = preparedUrl || buildAuthorizeUrl();
+      preparedUrl = null;
+      urlP.then((u) => { popup.location.href = u; })
+        .catch((e) => { try { popup.close(); } catch (x) {} resetSignIn(); gateMsg("Could not start sign-in. " + (e.message || "")); });
+      waitForPopup(popup);
+    } else {
+      btnSignIn.disabled = true; btnSignIn.textContent = "Redirecting to ArcGIS…";
+      buildAuthorizeUrl().then((u) => (window.location.href = u))
+        .catch((e) => { resetSignIn(); gateMsg("Could not start sign-in. " + (e.message || "")); });
+    }
+  }
+
+  function showGate(msg) {
+    $("app").hidden = true;
+    $("gate").hidden = false; $("gate").style.display = "";
+    resetSignIn();
+    gateMsg(msg || "");
+    btnSignIn.onclick = startSignIn;
+    // Embedded: offer a plain link that opens the whole site in its own tab (links are never pop-up-blocked)
+    if (isInIframe() && !$("newTabLink")) {
+      const u = new URL(window.location.href); u.search = "?signin=1"; u.hash = "";
+      $("gateMsg").insertAdjacentHTML("afterend",
+        `<p class="gate-alt">Sign-in window didn't open? <a id="newTabLink" href="${esc(u.href)}" target="_blank" rel="noopener">Open in a new tab</a></p>`);
+    }
+    if (isInIframe()) prepareUrl();
+  }
+
+  async function afterSignIn() {
+    let label = "Signed in";
+    try {
+      const me = await agsRequest(AUTH.selfUrl);
+      if (me && !me.error) label = me.fullName || me.username || label;
+      if (me && me.username) TOKEN.username = me.username;
+    } catch (e) { if (e.message === "Signed out") return; }
+    showApp(label);
+  }
+
+  async function startAuth() {
+    if (isLocalPreview) return showApp("Local preview (no sign-in)");
+    const cb = await handleCallback();
+    if (cb === "popup") return;
+    TOKEN = loadToken();
+    if (TOKEN) {
+      try { await ensureFreshToken(); return afterSignIn(); }
+      catch (e) { clearToken(); }
+    }
+    if (cb === "error") { showGate($("gateMsg").textContent); return; }
+    showGate();
+    // "Open in a new tab" link lands here with ?signin=1 — go straight to ArcGIS sign-in
+    if (!isInIframe() && new URLSearchParams(window.location.search).has("signin")) {
+      history.replaceState({}, "", window.location.pathname);
+      startSignIn();
+    }
   }
 
   $("btnSignOut").onclick = () => {
-    if (esriIdRef) esriIdRef.destroyCredentials();
+    clearToken();
     window.location.href = window.location.pathname;
   };
 
@@ -274,19 +405,17 @@
       showLoadMsg(`That URL doesn't end in a layer number. It should look like <code>…/FeatureServer/0</code>. Open <a href="#" id="lnkSettings">Settings</a> to fix it.`, true);
       return;
     }
-    if (!esriRequest) { showLoadMsg("ArcGIS is not available in local preview. Use demo data instead.", true); return; }
+    if (!TOKEN) { showLoadMsg("Sign in to load the survey table, or use demo data.", true); return; }
     busy(true, "Loading survey results from ArcGIS…");
     try {
-      const meta = (await esriRequest(url, { query: { f: "json" }, responseType: "json" })).data;
+      const meta = await agsRequest(url);
       if (meta.error) throw new Error(meta.error.message);
       const fields = (meta.fields || []).map((f) => ({ name: f.name, alias: f.alias || f.name, type: f.type, domain: f.domain }));
       const pageSize = Math.min(meta.maxRecordCount || 1000, 2000);
       let rows = [], offset = 0, more = true;
       while (more) {
-        const res = (await esriRequest(url + "/query", {
-          query: { f: "json", where: "1=1", outFields: "*", returnGeometry: false, resultOffset: offset, resultRecordCount: pageSize },
-          responseType: "json"
-        })).data;
+        const res = await agsRequest(url + "/query",
+          { where: "1=1", outFields: "*", returnGeometry: "false", resultOffset: offset, resultRecordCount: pageSize });
         if (res.error) throw new Error(res.error.message);
         const feats = res.features || [];
         rows = rows.concat(feats.map((f) => f.attributes));
@@ -306,6 +435,7 @@
       showLoadMsg("");
     } catch (e) {
       console.error(e);
+      if (e && e.message === "Signed out") return;
       const m = (e && e.message) || "Unknown error";
       showLoadMsg(`<b>Couldn't load the survey table.</b> ${esc(m)}<br><span class="sub">Check that the URL is right and that the table is shared with you (organization or a group you belong to). <a href="#" id="lnkSettings">Open Settings</a></span>`, true);
     } finally { busy(false); }

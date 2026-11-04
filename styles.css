@@ -31,6 +31,7 @@ code{font-size:12px;background:#ecebe6;padding:1px 4px;border-radius:4px}
 .gate-card h1{font-size:22px;margin:14px 0 8px}
 .gate-card p{color:var(--ink-2)}
 .gate-badge,.logo{display:inline-grid;place-items:center;width:44px;height:44px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800}
+.gate-alt{font-size:13px;margin:6px 0 0}
 .gate-msg{font-size:12px;min-height:1em;color:#b42318!important}
 
 /* Top bar */
