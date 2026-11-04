@@ -403,7 +403,7 @@
 
   /* ================================================================== TEAMS (assignments) */
   const teamKey = () => "deploy:teams:" + S.source + ":" + S.incident;
-  const newTeam = (n) => ({ name: "Team " + n, mission: "instate", slots: {} });
+  const newTeam = (n) => ({ name: "Team " + n, mission: "instate", location: "", slots: {} });
 
   function loadTeams() {
     const saved = store.get(teamKey());
@@ -461,6 +461,7 @@
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
     $("btnAddTeam").onclick = () => { S.teams.push(newTeam(S.teams.length + 1)); S.activeTeam = S.teams.length - 1; saveTeams(); renderOrg(); };
     $("inpTeamName").oninput = (e) => { S.teams[S.activeTeam].name = e.target.value || ("Team " + (S.activeTeam + 1)); saveTeams(); renderTeamTabs(); };
+    $("inpTeamLocation").oninput = (e) => { S.teams[S.activeTeam].location = e.target.value; saveTeams(); renderTeamTabs(); };
     $("selTeamMission").onchange = (e) => { S.teams[S.activeTeam].mission = e.target.value; saveTeams(); renderOrg(); };
     $("chkShowAll").onchange = (e) => { S.showAll = e.target.checked; renderOrg(); };
     $("btnClearTeam").onclick = () => {
@@ -855,7 +856,7 @@
 
   function renderTeamTabs() {
     $("teamTabs").innerHTML = S.teams.map((t, i) =>
-      `<button class="team-tab ${i === S.activeTeam ? "active" : ""}" data-i="${i}">${esc(t.name)}<span class="cnt">${Object.keys(t.slots).length}/${POSITIONS.length}</span></button>`).join("");
+      `<button class="team-tab ${i === S.activeTeam ? "active" : ""}" data-i="${i}" title="${esc(t.location ? "Location: " + t.location : "No deployment location set")}">${esc(t.name)}<span class="cnt">${Object.keys(t.slots).length}/${POSITIONS.length}</span></button>`).join("");
     $("teamTabs").querySelectorAll(".team-tab").forEach((b) => (b.onclick = () => { S.activeTeam = +b.dataset.i; renderOrg(); }));
   }
 
@@ -865,6 +866,7 @@
     renderTeamTabs();
     $("inpTeamName").value = team.name;
     $("selTeamMission").value = team.mission || "instate";
+    $("inpTeamLocation").value = team.location || "";
     $("chkShowAll").checked = S.showAll;
     const org = $("org");
     org.style.width = ORG_W + "px"; org.style.height = ORG_H + "px";
@@ -900,7 +902,11 @@
     const pad = 20, head = 84, W = ORG_W + pad * 2, H = ORG_H + head + 40;
     let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#ffffff"/>`;
     const filled = Object.keys(team.slots).length;
+    const loc = String(team.location || "").trim();
     s += `<rect width="${W}" height="64" fill="#14213d"/>` + T(24, 30, `${team.name} — Incident Management Team`, { size: 18, fill: "#fff", weight: 650 }) +
+         T(W - 24, 24, "DEPLOYMENT LOCATION", { size: 10.5, fill: "#c9d3e6", anchor: "end", weight: 600 }) +
+         (loc ? T(W - 24, 46, clip(loc, 40), { size: 16, fill: "#fff", anchor: "end", weight: 650 })
+              : T(W - 24, 46, "Not set", { size: 14, fill: "#8fa0bf", anchor: "end" })) +
          T(24, 50, `${incidentLabel()} · ${team.mission === "emac" ? "EMAC deployment" : "In-state deployment"} · ${filled} of ${POSITIONS.length} positions filled · ${stampText()}`, { size: 12, fill: "#c9d3e6" });
     s += `<g transform="translate(${pad},${head})">` + linksSvgInner();
     POSITIONS.forEach((pos) => {
@@ -1021,11 +1027,11 @@
 
   function downloadRoster() {
     const q = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
-    const head = ["Team", "Deployment type", "Position code", "Position", "Name", "Email", "Phone", "Team affiliation", "Availability", "Dates available", "In-state/EMAC", "Agency approval", "Restrictions", "Response length"];
+    const head = ["Team", "Deployment location", "Deployment type", "Position code", "Position", "Name", "Email", "Phone", "Team affiliation", "Availability", "Dates available", "In-state/EMAC", "Agency approval", "Restrictions", "Response length"];
     const lines = [head.map(q).join(",")];
     S.teams.forEach((t) => POSITIONS.forEach((pos) => {
       const p = t.slots[pos.code] && S.byId[t.slots[pos.code]];
-      lines.push([t.name, t.mission === "emac" ? "EMAC" : "In-state", pos.label, pos.title,
+      lines.push([t.name, t.location || "", t.mission === "emac" ? "EMAC" : "In-state", pos.label, pos.title,
         p ? p.name : "UNFILLED", p ? p.email : "", p ? p.phone : "", p ? p.regionRaw : "", p ? p.availRaw : "", p ? p.dates : "",
         p ? p.scopeRaw : "", p ? p.approvalRaw : "", p ? p.restrictions : "", p ? p.duration : ""].map(q).join(","));
     }));
