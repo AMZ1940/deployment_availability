@@ -46,7 +46,8 @@
     { code: "COML", label: "COML",       title: "Communications Unit Leader",      re: /\bCOML|communications?\s*unit/i },
     { code: "STAM", label: "STAM",       title: "Staging Area Manager",            re: /\bSTAM|staging\s*area/i },
     { code: "RESL", label: "RESL",       title: "Resource Unit Leader",            re: /\bRESL|resources?\s*unit/i },
-    { code: "ITSL", label: "ITSL",       title: "Info Tech Service Unit Leader",   re: /\bITSL|info(rmation)?\s*tech/i }
+    { code: "ITSL", label: "ITSL",       title: "Info Tech Service Unit Leader",   re: /\bITSL|info(rmation)?\s*tech/i },
+    { code: "DOCL", label: "DOCL",       title: "Documentation Unit Leader",       re: /\bDOCL|documentation\s*unit/i }
   ];
   const POS = Object.fromEntries(POSITIONS.map((p) => [p.code, p]));
   // Deputy OSC must be tested before OPS (both mention operations)
@@ -804,7 +805,8 @@
     LOFR: { cx: COLS[0], y: 170 }, PIO: { cx: COLS[1], y: 170 }, SOF: { cx: COLS[2], y: 170 },
     OPS:  { cx: COLS[0], y: 360 }, PSC: { cx: COLS[1], y: 360 }, LSC: { cx: COLS[2], y: 360 }, FSC: { cx: COLS[3], y: 360 },
     DOSC: { cx: COLS[0], y: 510 }, SITL: { cx: COLS[1], y: 510 }, COML: { cx: COLS[2], y: 510 },
-    STAM: { cx: COLS[0], y: 660 }, RESL: { cx: COLS[1], y: 660 }, ITSL: { cx: COLS[2], y: 660 }
+    STAM: { cx: COLS[0], y: 660 }, RESL: { cx: COLS[1], y: 660 }, ITSL: { cx: COLS[2], y: 660 },
+    DOCL: { cx: COLS[3], y: 510 }
   };
   const box = (c) => ({ x: LAYOUT[c].cx - BW / 2, y: LAYOUT[c].y, w: BW, h: BH, cx: LAYOUT[c].cx });
 
@@ -819,7 +821,7 @@
     s += L(lofr.x + BW, midC, pio.x, midC);                        // LOFR
     s += L(COLS[0], busY, COLS[3], busY);                          // section bus
     ["OPS", "PSC", "LSC", "FSC"].forEach((c) => (s += L(LAYOUT[c].cx, busY, LAYOUT[c].cx, LAYOUT[c].y)));
-    [["OPS", "DOSC"], ["DOSC", "STAM"], ["PSC", "SITL"], ["SITL", "RESL"], ["LSC", "COML"], ["COML", "ITSL"]].forEach(([a, b]) =>
+    [["OPS", "DOSC"], ["DOSC", "STAM"], ["PSC", "SITL"], ["SITL", "RESL"], ["LSC", "COML"], ["COML", "ITSL"], ["FSC", "DOCL"]].forEach(([a, b]) =>
       (s += L(LAYOUT[a].cx, LAYOUT[a].y + BH, LAYOUT[b].cx, LAYOUT[b].y)));
     return s;
   }
