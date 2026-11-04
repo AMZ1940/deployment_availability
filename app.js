@@ -688,7 +688,12 @@
     });
     return out;
   }
+  // In the PDF the page header (top right) already carries the description, so the blue bar shows the title only
+  let PDF_MODE = false;
+  const HB = () => (PDF_MODE ? 44 : 64);          // blue header bar height
+  const DH = () => 64 - HB();                     // how much shorter than the PNG version
   function exportHeader(title, sub, W) {
+    if (PDF_MODE) return `<rect width="${W}" height="${HB()}" fill="#14213d"/>` + T(24, 28, title, { size: 18, fill: "#fff", weight: 650 });
     return `<rect width="${W}" height="64" fill="#14213d"/>` +
       T(24, 30, title, { size: 18, fill: "#fff", weight: 650 }) + T(24, 50, sub, { size: 12, fill: "#c9d3e6" });
   }
@@ -717,7 +722,7 @@
       pool.forEach((p) => { if (p.quals.includes(pos.code) && by[p.region] != null) by[p.region]++; });
       return { pos, by, total: regions.reduce((a, r) => a + by[r], 0) };
     });
-    const W = 1100, top = forExport ? 110 : 34, H = top + 300, L = 44, R = 16, B = 46;
+    const W = 1100, top = forExport ? 110 - DH() : 34, H = top + 300, L = 44, R = 16, B = 46;
     const plotH = H - top - B, plotW = W - L - R;
     const max = niceMax(Math.max(1, ...data.map((d) => d.total)));
     const tk = ticks(max); const ymax = tk[tk.length - 1];
@@ -756,7 +761,7 @@
       const ql = pool.filter((p) => p.region === r && p.quals.length).length;
       return { r, by, total: levels.reduce((a, l) => a + by[l], 0), ql };
     });
-    const W = 1100, top = forExport ? 110 : 34, rowH = 44, L = 110, R = 150, B = 34;
+    const W = 1100, top = forExport ? 110 - DH() : 34, rowH = 44, L = 110, R = 150, B = 34;
     const H = top + data.length * rowH + B;
     const plotW = W - L - R;
     const max = niceMax(Math.max(1, ...data.map((d) => d.total)));
@@ -944,15 +949,21 @@
 
   function orgSvg(ti) {
     const team = S.teams[ti];
-    const pad = 20, head = 84, W = ORG_W + pad * 2, H = ORG_H + head + 40;
+    const pad = 20, head = 140 - DH(), W = ORG_W + pad * 2, H = ORG_H + head + 40;
     let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#ffffff"/>`;
     const filled = Object.keys(team.slots).length, nTr = Object.keys(team.trainees || {}).length;
     const loc = String(team.location || "").trim();
-    s += `<rect width="${W}" height="64" fill="#14213d"/>` + T(24, 30, `${team.name} — Incident Management Team`, { size: 18, fill: "#fff", weight: 650 }) +
-         T(W - 24, 24, "DEPLOYMENT LOCATION", { size: 10.5, fill: "#c9d3e6", anchor: "end", weight: 600 }) +
-         (loc ? T(W - 24, 46, clip(loc, 40), { size: 16, fill: "#fff", anchor: "end", weight: 650 })
-              : T(W - 24, 46, "Not set", { size: 14, fill: "#8fa0bf", anchor: "end" })) +
-         T(24, 50, `${incidentLabel()} · ${team.mission === "emac" ? "EMAC deployment" : "In-state deployment"} · ${filled} of ${POSITIONS.length} positions filled${nTr ? ` · ${nTr} trainee${nTr > 1 ? "s" : ""}` : ""} · ${stampText()}`, { size: 12, fill: "#c9d3e6" });
+    const hb = HB();
+    s += `<rect width="${W}" height="${hb}" fill="#14213d"/>` + T(24, PDF_MODE ? 28 : 30, `${team.name} — Incident Management Team`, { size: 18, fill: "#fff", weight: 650 }) +
+         (PDF_MODE ? "" : T(24, 50, `${filled} of ${POSITIONS.length} positions filled${nTr ? ` · ${nTr} trainee${nTr > 1 ? "s" : ""}` : ""} · ${stampText()}`, { size: 12, fill: "#c9d3e6" }));
+    // Team information band: incident, deployment location, deployment type
+    const band = (x, label, value, empty) =>
+      T(x, hb + 22, label, { size: 10.5, fill: "#52514e", weight: 700 }) +
+      (value ? T(x, hb + 44, clip(value, 46), { size: 16, fill: "#0b0b0b", weight: 700 }) : T(x, hb + 44, empty, { size: 15, fill: "#a12a2a", weight: 600 }));
+    s += `<rect y="${hb}" width="${W}" height="58" fill="#eef2f8"/><line x1="0" x2="${W}" y1="${hb + 58}" y2="${hb + 58}" stroke="#c9d3e6"/>` +
+         band(24, "DEPLOYMENT LOCATION", loc, "Not set") +
+         band(470, "DEPLOYMENT TYPE", team.mission === "emac" ? "EMAC" : "In-state", "") +
+         band(680, "INCIDENT", incidentLabel(), "");
     s += `<g transform="translate(${pad},${head})">` + linksSvgInner();
     POSITIONS.forEach((pos) => {
       const b = box(pos.code), p = team.slots[pos.code] && S.byId[team.slots[pos.code]];
@@ -977,13 +988,13 @@
 
   function tableSvg(forPdf) {
     const rows = gapRows();
-    const W = 1100, rowH = 26, top = 64 + 78, CW = 58;
+    const W = 1100, rowH = 26, top = 64 + 78 - DH(), CW = 58;
     const NX = [0, 1, 2, 3, 4, 5.25, 6.25, 7.25, 8.25, 9.25, 10.5].map((i) => 392 + i * CW);   // numeric column x
     const H = top + rowH * (rows.length + 1) + 40;
     let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#fff"/>`;
     s += exportHeader("Position gap review — qualified personnel still available", `${incidentLabel()} · ${S.regions.size < REGIONS.length ? "Affiliation: " + [...S.regions].join(", ") : "All affiliations"} · people already placed on teams removed · ${stampText()}`, W);
     // group headers
-    const hy = 76, gw = CW * 5 - 6;
+    const hy = 76 - DH(), gw = CW * 5 - 6;
     s += `<rect x="${NX[0]}" y="${hy}" width="${gw}" height="22" fill="#2a6bb8"/>` + T(NX[0] + gw / 2, hy + 15, "In-state only", { size: 12, anchor: "middle", fill: "#fff", weight: 650 });
     s += `<rect x="${NX[5]}" y="${hy}" width="${gw}" height="22" fill="#14213d"/>` + T(NX[5] + gw / 2, hy + 15, "EMAC / in-state", { size: 12, anchor: "middle", fill: "#fff", weight: 650 });
     s += T(24, top - 10, "Code", { size: 11.5, fill: "#52514e", weight: 650 }) + T(110, top - 10, "Position", { size: 11.5, fill: "#52514e", weight: 650 });
@@ -1047,6 +1058,23 @@
     catch (e) { console.error(e); showLoadMsg("Couldn't create the image in this browser.", true); }
   }
 
+  // TEMA logo for the PDF header (tema-logo.png in the site folder). If it's missing the PDF is built without it.
+  let logoCache;
+  async function getLogo() {
+    if (logoCache !== undefined) return logoCache;
+    try {
+      const blob = await (await fetch("tema-logo.png", { cache: "force-cache" })).blob();
+      if (!/^image\//.test(blob.type)) throw new Error("not an image");
+      const url = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
+      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+      // Re-encode as PNG so jsPDF accepts it whatever the source format
+      const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight;
+      c.getContext("2d").drawImage(img, 0, 0);
+      logoCache = { url: c.toDataURL("image/png"), w: img.naturalWidth, h: img.naturalHeight };
+    } catch (e) { console.warn("TEMA logo not found (tema-logo.png) — PDF built without it.", e); logoCache = null; }
+    return logoCache;
+  }
+
   async function downloadBriefingPdf() {
     if (!window.jspdf) { showLoadMsg("The PDF library didn't load. Check your connection and reload, or use the PNG downloads.", true); return; }
     busy(true, "Building briefing PDF…");
@@ -1061,19 +1089,36 @@
         pdf.addImage(r.url, "PNG", (PW - w) / 2, yTop, w, h);
         return yTop + h;
       };
-      const footer = (n) => { pdf.setFontSize(8); pdf.setTextColor(138); pdf.text(`Deployment availability briefing · ${incidentLabel()} · page ${n}`, M, PH - 14); };
+      const logo = await getLogo();
+      const HEAD = 58;                                  // page header height (pt)
+      const header = (subtitle) => {
+        if (logo) pdf.addImage(logo.url, "PNG", M, 12, 36 * logo.w / logo.h, 36);
+        pdf.setTextColor(20, 33, 61); pdf.setFont("helvetica", "bold"); pdf.setFontSize(13);
+        pdf.text("Deployment Availability Briefing", PW - M, 26, { align: "right" });
+        pdf.setFont("helvetica", "normal"); pdf.setFontSize(9); pdf.setTextColor(82, 81, 78);
+        pdf.text(subtitle, PW - M, 40, { align: "right" });
+        pdf.setDrawColor(201, 211, 230); pdf.setLineWidth(0.75); pdf.line(M, HEAD - 6, PW - M, HEAD - 6);
+      };
+      const footer = (n) => { pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(138); pdf.text(`Deployment availability briefing · ${incidentLabel()} · page ${n}`, M, PH - 14); };
+      const top = HEAD + 4, avail = PH - top - 30;
+      const affil = S.regions.size < REGIONS.length ? "Affiliation: " + [...S.regions].map((r) => (r === "Unspecified" ? "Not stated" : r)).join(", ") : "All affiliations";
+      PDF_MODE = true;
       let page = 1;
-      await place(tableSvg(true), M, PH - M * 2 - 10); footer(page);
-      pdf.addPage(); page++;
-      const yA = await place(chartASvg(true), M, (PH - M * 2) * 0.58);
-      await place(chartBSvg(true), yA + 12, PH - yA - M - 24); footer(page);
+      header(`${incidentLabel()} · ${affil} · people placed on teams removed · ${stampText()}`);
+      await place(tableSvg(true), top, avail); footer(page);
+      pdf.addPage(); page++; header(`${incidentLabel()} · ${filterSummary()} · ${stampText()}`);
+      const yA = await place(chartASvg(true), top, avail * 0.56);
+      await place(chartBSvg(true), yA + 10, PH - yA - 40); footer(page);
       for (let i = 0; i < S.teams.length; i++) {
+        const t = S.teams[i];
         pdf.addPage(); page++;
-        await place(orgSvg(i), M, PH - M * 2 - 10); footer(page);
+        const nF = Object.keys(t.slots).length, nT = Object.keys(t.trainees || {}).length;
+        header(`${t.name} · ${t.mission === "emac" ? "EMAC" : "In-state"} deployment · ${String(t.location || "").trim() || "Location not set"} · ${nF} of ${POSITIONS.length} positions filled${nT ? ` · ${nT} trainee${nT > 1 ? "s" : ""}` : ""} · ${stampText()}`);
+        await place(orgSvg(i), top, avail); footer(page);
       }
       pdf.save(fileBase() + "_deployment_briefing.pdf");
     } catch (e) { console.error(e); showLoadMsg("Couldn't build the PDF: " + esc(e.message || e), true); }
-    finally { busy(false); }
+    finally { PDF_MODE = false; busy(false); }
   }
 
   function downloadRoster() {
