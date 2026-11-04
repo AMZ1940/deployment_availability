@@ -11,9 +11,11 @@
   const CONFIG = {
     CLIENT_ID: "w9VaoRCHch2gIU1d",
     PORTAL_URL: "https://www.arcgis.com",       // or https://<your-org>.maps.arcgis.com / your Enterprise portal
-    // REST URL of the hosted table or layer that holds the survey results.
-    // Can also be set from the Settings button (saved per browser).
-    LAYER_URL: "",
+    // REST URL of the hosted table or layer that holds the survey results — everyone loads this one.
+    // Admins can point their own browser at a different table from Settings.
+    LAYER_URL: "https://services1.arcgis.com/kILp9lqGUeOhnDbI/arcgis/rest/services/tn_form_681_entries_(2)/FeatureServer/0",
+    // ArcGIS usernames (or account emails) that see the Settings button. Not case-sensitive.
+    ADMINS: ["ali.fontana@tn.gov"],
     // Optional: force a survey question to a specific field name, e.g. { qualified: "qualified_position" }.
     // Leave empty to match automatically on field names and aliases.
     FIELDS: {}
@@ -346,18 +348,24 @@
     if (isInIframe()) prepareUrl();
   }
 
+  // Settings is shown only to the accounts listed in CONFIG.ADMINS
+  function isAdminUser(me) {
+    const ids = [me && me.username, me && me.email, TOKEN && TOKEN.username].filter(Boolean).map((x) => String(x).toLowerCase());
+    return CONFIG.ADMINS.some((a) => ids.includes(String(a).toLowerCase()));
+  }
   async function afterSignIn() {
-    let label = "Signed in";
+    let label = "Signed in", me = null;
     try {
-      const me = await agsRequest(AUTH.selfUrl);
+      me = await agsRequest(AUTH.selfUrl);
       if (me && !me.error) label = me.fullName || me.username || label;
       if (me && me.username) TOKEN.username = me.username;
     } catch (e) { if (e.message === "Signed out") return; }
+    S.isAdmin = isAdminUser(me && !me.error ? me : null);
     showApp(label);
   }
 
   async function startAuth() {
-    if (isLocalPreview) return showApp("Local preview (no sign-in)");
+    if (isLocalPreview) { S.isAdmin = true; return showApp("Local preview (no sign-in)"); }
     const cb = await handleCallback();
     if (cb === "popup") return;
     TOKEN = loadToken();
@@ -384,11 +392,15 @@
     $("gate").hidden = true;
     $("app").hidden = false;
     $("userName").textContent = userLabel;
+    $("btnSettings").hidden = !S.isAdmin;
     wireUi();
-    const url = store.get("deploy:layerUrl") || CONFIG.LAYER_URL;
+    // Admins may have pointed their own browser at another table; everyone else always uses CONFIG.LAYER_URL
+    const url = (S.isAdmin && store.get("deploy:layerUrl")) || CONFIG.LAYER_URL;
     if (isLocalPreview) return loadDemo();
     if (url) loadLayer(url);
-    else showLoadMsg(`<b>No survey table connected yet.</b> Open <a href="#" id="lnkSettings">Settings</a> and paste the REST URL of the ArcGIS table that holds the survey results, or load demo data to try the page.`);
+    else showLoadMsg(S.isAdmin
+      ? `<b>No survey table connected yet.</b> Open <a href="#" id="lnkSettings">Settings</a> and paste the REST URL of the ArcGIS table that holds the survey results, or load demo data to try the page.`
+      : `<b>No survey table connected yet.</b> Please contact the site administrator.`);
   }
 
   /* ================================================================== DATA LOADING */
@@ -402,7 +414,7 @@
   async function loadLayer(url) {
     url = url.trim().replace(/\/+$/, "").replace(/\/query$/i, "");
     if (!/\/(FeatureServer|MapServer)\/\d+$/i.test(url)) {
-      showLoadMsg(`That URL doesn't end in a layer number. It should look like <code>…/FeatureServer/0</code>. Open <a href="#" id="lnkSettings">Settings</a> to fix it.`, true);
+      showLoadMsg(`That URL doesn't end in a layer number. It should look like <code>…/FeatureServer/0</code>.${S.isAdmin ? ` Open <a href="#" id="lnkSettings">Settings</a> to fix it.` : " Please contact the site administrator."}`, true);
       return;
     }
     if (!TOKEN) { showLoadMsg("Sign in to load the survey table, or use demo data.", true); return; }
@@ -429,7 +441,7 @@
         if (cv) r[f.name] = cv.name;
       }));
       S.source = url;
-      store.set("deploy:layerUrl", url);
+      if (S.isAdmin) store.set("deploy:layerUrl", url);
       $("demoBanner").hidden = true;
       ingest(fields, rows);
       showLoadMsg("");
@@ -437,7 +449,7 @@
       console.error(e);
       if (e && e.message === "Signed out") return;
       const m = (e && e.message) || "Unknown error";
-      showLoadMsg(`<b>Couldn't load the survey table.</b> ${esc(m)}<br><span class="sub">Check that the URL is right and that the table is shared with you (organization or a group you belong to). <a href="#" id="lnkSettings">Open Settings</a></span>`, true);
+      showLoadMsg(`<b>Couldn't load the survey table.</b> ${esc(m)}<br><span class="sub">${S.isAdmin ? `Check that the URL is right and that the table is shared with you (organization or a group you belong to). <a href="#" id="lnkSettings">Open Settings</a>` : "The survey table may not be shared with your ArcGIS account. Please contact the site administrator."}</span>`, true);
     } finally { busy(false); }
   }
 
@@ -593,7 +605,7 @@
     $("selIncident").onchange = (e) => selectIncident(e.target.value);
     $("selMission").onchange = (e) => { S.mission = e.target.value; renderCharts(); };
     $("selAvail").onchange = (e) => { S.avail = e.target.value; renderCharts(); };
-    $("btnRefresh").onclick = () => (S.source === "demo" ? loadDemo() : S.source ? loadLayer(S.source) : openSettings());
+    $("btnRefresh").onclick = () => (S.source === "demo" ? loadDemo() : S.source ? loadLayer(S.source) : CONFIG.LAYER_URL ? loadLayer(CONFIG.LAYER_URL) : openSettings());
     $("btnSettings").onclick = openSettings;
     $("btnSaveLayer").onclick = (e) => { e.preventDefault(); const u = $("inpLayerUrl").value; $("dlgSettings").close(); if (u) loadLayer(u); };
     $("btnDemo").onclick = (e) => { e.preventDefault(); $("dlgSettings").close(); loadDemo(); };
@@ -1306,6 +1318,7 @@
 
   /* ================================================================== SETTINGS */
   function openSettings() {
+    if (!S.isAdmin) return;
     $("inpLayerUrl").value = (S.source && S.source !== "demo") ? S.source : (store.get("deploy:layerUrl") || CONFIG.LAYER_URL || "");
     const fm = S.fieldMap || {};
     $("tblFields").innerHTML = `<tr><th>Survey question</th><th>Matched field</th></tr>` +
