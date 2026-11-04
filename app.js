@@ -690,11 +690,13 @@
   }
   // In the PDF the page header (top right) already carries the description, so the blue bar shows the title only
   let PDF_MODE = false;
+  // TEMA brand colors (from the TEMA color logo) used on PDF pages
+  const BRAND = { navy: "#1c3b6a", red: "#ef393e", gray: "#6d7276" };
   const HB = () => (PDF_MODE ? 44 : 64);          // blue header bar height
   const DH = () => 64 - HB();                     // how much shorter than the PNG version
   function exportHeader(title, sub, W) {
-    if (PDF_MODE) return `<rect width="${W}" height="${HB()}" fill="#14213d"/>` + T(24, 28, title, { size: 18, fill: "#fff", weight: 650 });
-    return `<rect width="${W}" height="64" fill="#14213d"/>` +
+    if (PDF_MODE) return `<rect width="${W}" height="${HB()}" fill="${BRAND.navy}"/><rect width="8" height="${HB()}" fill="${BRAND.red}"/>` + T(24, 28, title, { size: 18, fill: "#fff", weight: 650 });
+    return `<rect width="${W}" height="64" fill="${BRAND.navy}"/><rect width="8" height="64" fill="${BRAND.red}"/>` +
       T(24, 30, title, { size: 18, fill: "#fff", weight: 650 }) + T(24, 50, sub, { size: 12, fill: "#c9d3e6" });
   }
   const filterSummary = () => {
@@ -954,7 +956,7 @@
     const filled = Object.keys(team.slots).length, nTr = Object.keys(team.trainees || {}).length;
     const loc = String(team.location || "").trim();
     const hb = HB();
-    s += `<rect width="${W}" height="${hb}" fill="#14213d"/>` + T(24, PDF_MODE ? 28 : 30, `${team.name} — Incident Management Team`, { size: 18, fill: "#fff", weight: 650 }) +
+    s += `<rect width="${W}" height="${hb}" fill="${BRAND.navy}"/><rect width="8" height="${hb}" fill="${BRAND.red}"/>` + T(24, PDF_MODE ? 28 : 30, `${team.name} — Incident Management Team`, { size: 18, fill: "#fff", weight: 650 }) +
          (PDF_MODE ? "" : T(24, 50, `${filled} of ${POSITIONS.length} positions filled${nTr ? ` · ${nTr} trainee${nTr > 1 ? "s" : ""}` : ""} · ${stampText()}`, { size: 12, fill: "#c9d3e6" }));
     // Team information band: incident, deployment location, deployment type
     const band = (x, label, value, empty) =>
@@ -1053,8 +1055,21 @@
     const a = document.createElement("a"); a.href = url; a.download = name;
     document.body.appendChild(a); a.click(); a.remove();
   }
+  // PNG downloads: add a white TEMA banner (color logo + red/navy rule) above the image, like the PDF pages
+  function brandWrap(svg, logo) {
+    const m = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
+    const W = +m[1], H = +m[2], BAND = 78;
+    const inner = svg.replace(/^<svg /, `<svg x="0" y="${BAND}" `);
+    const lh = 44, lw = logo ? lh * logo.w / logo.h : 0;
+    return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${W} ${H + BAND}" width="${W}" height="${H + BAND}">` +
+      `<rect width="${W}" height="${H + BAND}" fill="#fff"/>` +
+      (logo ? `<image x="20" y="13" width="${lw}" height="${lh}" href="${logo.url}" xlink:href="${logo.url}"/>` : T(20, 44, "Tennessee Emergency Management Authority", { size: 16, fill: BRAND.navy, weight: 700 })) +
+      T(W - 20, 40, "Deployment Availability", { size: 17, fill: BRAND.navy, weight: 700, anchor: "end" }) +
+      `<rect x="20" y="${BAND - 12}" width="${W - 40}" height="3.5" fill="${BRAND.red}"/><rect x="20" y="${BAND - 7}" width="${W - 40}" height="1" fill="${BRAND.navy}"/>` +
+      inner + `</svg>`;
+  }
   async function downloadSvgPng(svg, name) {
-    try { const r = await svgToPng(svg); download(r.url, name); }
+    try { const logo = await getLogo(); const r = await svgToPng(brandWrap(svg, logo)); download(r.url, name); }
     catch (e) { console.error(e); showLoadMsg("Couldn't create the image in this browser.", true); }
   }
 
@@ -1063,15 +1078,19 @@
   async function getLogo() {
     if (logoCache !== undefined) return logoCache;
     try {
-      const blob = await (await fetch("tema-logo.png", { cache: "force-cache" })).blob();
-      if (!/^image\//.test(blob.type)) throw new Error("not an image");
+      let blob = null;
+      for (const f of ["tema-logo-color.png", "tema-logo.png"]) {
+        const r = await fetch(f, { cache: "force-cache" }).catch(() => null);
+        if (r && r.ok) { const b = await r.blob(); if (/^image\//.test(b.type)) { blob = b; break; } }
+      }
+      if (!blob) throw new Error("no logo file");
       const url = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
       const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
       // Re-encode as PNG so jsPDF accepts it whatever the source format
       const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight;
       c.getContext("2d").drawImage(img, 0, 0);
       logoCache = { url: c.toDataURL("image/png"), w: img.naturalWidth, h: img.naturalHeight };
-    } catch (e) { console.warn("TEMA logo not found (tema-logo.png) — PDF built without it.", e); logoCache = null; }
+    } catch (e) { console.warn("TEMA logo not found (tema-logo-color.png) — PDF built without it.", e); logoCache = null; }
     return logoCache;
   }
 
@@ -1090,17 +1109,25 @@
         return yTop + h;
       };
       const logo = await getLogo();
-      const HEAD = 58;                                  // page header height (pt)
+      const HEAD = 60;                                  // page header height (pt)
       const header = (subtitle) => {
         if (logo) pdf.addImage(logo.url, "PNG", M, 12, 36 * logo.w / logo.h, 36);
-        pdf.setTextColor(20, 33, 61); pdf.setFont("helvetica", "bold"); pdf.setFontSize(13);
-        pdf.text("Deployment Availability Briefing", PW - M, 26, { align: "right" });
-        pdf.setFont("helvetica", "normal"); pdf.setFontSize(9); pdf.setTextColor(82, 81, 78);
-        pdf.text(subtitle, PW - M, 40, { align: "right" });
-        pdf.setDrawColor(201, 211, 230); pdf.setLineWidth(0.75); pdf.line(M, HEAD - 6, PW - M, HEAD - 6);
+        pdf.setTextColor(28, 59, 106); pdf.setFont("helvetica", "bold"); pdf.setFontSize(14);
+        pdf.text("Deployment Availability Briefing", PW - M, 27, { align: "right" });
+        pdf.setFont("helvetica", "normal"); pdf.setFontSize(9); pdf.setTextColor(109, 114, 118);
+        pdf.text(subtitle, PW - M, 41, { align: "right" });
+        // TEMA red rule with a thin navy line under it
+        pdf.setFillColor(239, 57, 62); pdf.rect(M, HEAD - 8, PW - M * 2, 2.5, "F");
+        pdf.setFillColor(28, 59, 106); pdf.rect(M, HEAD - 4.5, PW - M * 2, 0.75, "F");
       };
-      const footer = (n) => { pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(138); pdf.text(`Deployment availability briefing · ${incidentLabel()} · page ${n}`, M, PH - 14); };
-      const top = HEAD + 4, avail = PH - top - 30;
+      const footer = (n) => {
+        pdf.setDrawColor(201, 211, 230); pdf.setLineWidth(0.5); pdf.line(M, PH - 26, PW - M, PH - 26);
+        pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(109, 114, 118);
+        pdf.text(`Tennessee Emergency Management Authority · Deployment availability briefing · ${incidentLabel()}`, M, PH - 14);
+        pdf.setTextColor(28, 59, 106); pdf.setFont("helvetica", "bold");
+        pdf.text(`Page ${n}`, PW - M, PH - 14, { align: "right" });
+      };
+      const top = HEAD + 4, avail = PH - top - 34;
       const affil = S.regions.size < REGIONS.length ? "Affiliation: " + [...S.regions].map((r) => (r === "Unspecified" ? "Not stated" : r)).join(", ") : "All affiliations";
       PDF_MODE = true;
       let page = 1;
