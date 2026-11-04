@@ -130,6 +130,10 @@ table.gap{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeri
 .ob .ob-title{font-size:12.5px;font-weight:650;text-decoration:underline;line-height:1.2}
 .ob .ob-code{font-size:11px;color:var(--ink-2)}
 .ob select{margin:0 8px;font:inherit;font-size:12.5px;padding:4px 6px;border:1px solid #c9c7c0;border-radius:6px;background:#fff;max-width:calc(100% - 16px)}
+.ob select.trainee-sel{margin-top:4px;font-size:12px;border-style:dashed;border-color:#9b93d9;color:#3a2f8f;background:#faf9ff}
+.ob select.trainee-sel.has{border-style:solid;background:#efedfa;font-weight:600}
+.ob .trainee-ph{margin:4px 8px 0;font-size:11px;color:var(--ink-3);text-align:center;border:1px dashed #d7d5ce;border-radius:6px;padding:4px}
+.gap .badge-t{display:inline-block;margin-left:4px;font-size:11px;font-weight:700;background:#efedfa;color:#3a2f8f;border-radius:999px;padding:1px 6px}
 .ob .ob-foot{margin-top:auto;background:#55534e;color:#fff;font-size:11.5px;padding:4px 8px;min-height:24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ob.filled{border-color:#1c5cab}
 .ob.filled .ob-foot{background:#1c5cab}

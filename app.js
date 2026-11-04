@@ -404,19 +404,27 @@
 
   /* ================================================================== TEAMS (assignments) */
   const teamKey = () => "deploy:teams:" + S.source + ":" + S.incident;
-  const newTeam = (n) => ({ name: "Team " + n, mission: "instate", location: "", slots: {} });
+  const newTeam = (n) => ({ name: "Team " + n, mission: "instate", location: "", slots: {}, trainees: {} });
 
   function loadTeams() {
     const saved = store.get(teamKey());
     S.teams = Array.isArray(saved) && saved.length ? saved : [newTeam(1)];
-    S.teams.forEach((t) => { t.slots = t.slots || {}; Object.keys(t.slots).forEach((c) => { if (!S.byId[t.slots[c]] || !POS[c]) delete t.slots[c]; }); });
+    S.teams.forEach((t) => {
+      t.slots = t.slots || {}; t.trainees = t.trainees || {};
+      Object.keys(t.slots).forEach((c) => { if (!S.byId[t.slots[c]] || !POS[c]) delete t.slots[c]; });
+      // A trainee only stays if the position still has a qualified person selected
+      Object.keys(t.trainees).forEach((c) => { if (!S.byId[t.trainees[c]] || !POS[c] || !t.slots[c]) delete t.trainees[c]; });
+    });
     S.activeTeam = Math.min(S.activeTeam, S.teams.length - 1);
   }
   const saveTeams = () => store.set(teamKey(), S.teams);
 
   function assignments() {
     const a = {};
-    S.teams.forEach((t, ti) => Object.entries(t.slots).forEach(([code, pid]) => { if (pid) a[pid] = { team: ti, code }; }));
+    S.teams.forEach((t, ti) => {
+      Object.entries(t.slots).forEach(([code, pid]) => { if (pid) a[pid] = { team: ti, code, role: "primary" }; });
+      Object.entries(t.trainees || {}).forEach(([code, pid]) => { if (pid) a[pid] = { team: ti, code, role: "trainee" }; });
+    });
     return a;
   }
 
@@ -441,7 +449,8 @@
       r.inT = r.in.Full + r.in.Partial + r.in.Blank;
       r.emT = r.em.Full + r.em.Partial + r.em.Blank;
       r.all = r.inT + r.emT;
-      r.filled = Object.values(asg).filter((x) => x.code === pos.code).length;
+      r.filled = Object.values(asg).filter((x) => x.code === pos.code && x.role === "primary").length;
+      r.trFilled = Object.values(asg).filter((x) => x.code === pos.code && x.role === "trainee").length;
       return r;
     });
   }
@@ -467,11 +476,11 @@
     $("chkShowAll").onchange = (e) => { S.showAll = e.target.checked; renderOrg(); };
     $("btnClearTeam").onclick = () => {
       const t = S.teams[S.activeTeam];
-      if (!Object.keys(t.slots).length || confirmAction(`Clear every selection on ${t.name}? Those people go back into the available counts.`)) { t.slots = {}; saveTeams(); renderAll(); }
+      if (!Object.keys(t.slots).length || confirmAction(`Clear every selection on ${t.name}? Those people go back into the available counts.`)) { t.slots = {}; t.trainees = {}; saveTeams(); renderAll(); }
     };
     $("btnRemoveTeam").onclick = () => {
       const t = S.teams[S.activeTeam];
-      if (S.teams.length === 1) { t.slots = {}; t.name = "Team 1"; saveTeams(); renderAll(); return; }
+      if (S.teams.length === 1) { t.slots = {}; t.trainees = {}; t.name = "Team 1"; saveTeams(); renderAll(); return; }
       if (!Object.keys(t.slots).length || confirmAction(`Remove ${t.name}? Its people go back into the available counts.`)) {
         S.teams.splice(S.activeTeam, 1); S.activeTeam = Math.max(0, S.activeTeam - 1); saveTeams(); renderAll();
       }
@@ -579,7 +588,7 @@
           ${cell(r.in.Full)}${cell(r.in.Partial)}${cell(r.in.Blank)}${cell(r.inT, true)}${trn(r.inTr)}
           ${cell(r.em.Full)}${cell(r.em.Partial)}${cell(r.em.Blank)}${cell(r.emT, true)}${trn(r.emTr)}
           ${cell(r.all, true)}
-          <td class="num">${r.filled ? `<span class="badge-a">${r.filled}</span>` : `<span class="muted">–</span>`}</td>
+          <td class="num">${r.filled ? `<span class="badge-a">${r.filled}</span>` : `<span class="muted">–</span>`}${r.trFilled ? `<span class="badge-t" title="Trainees placed">+${r.trFilled} T</span>` : ""}</td>
         </tr>`).join("")}
       </tbody>
       <tfoot><tr><td></td><td>Total (a person is counted once for each position they're qualified in)</td>
@@ -613,7 +622,7 @@
       p.scope === "EMAC" ? `<span class="tag emac">In-state & EMAC</span>` : `<span class="tag">In-state only</span>`,
       p.approval !== "Yes" ? `<span class="tag warn">Agency approval: ${esc(p.approvalRaw || "not answered")}</span>` : "",
       p.dupes ? `<span class="tag">Latest of ${p.dupes + 1} submissions</span>` : "",
-      a ? `<span class="tag asg">On ${esc(S.teams[a.team].name)} · ${esc(POS[a.code].label)}</span>` : ""
+      a ? `<span class="tag asg">On ${esc(S.teams[a.team].name)} · ${esc(POS[a.code].label)}${a.role === "trainee" ? " trainee" : ""}</span>` : ""
     ].join("");
     const row = (k, v) => (v ? `<dt>${k}</dt><dd>${esc(v)}</dd>` : "");
     return `<div class="pcard ${a ? "assigned" : ""}">
@@ -797,22 +806,23 @@
   }
 
   /* ================================================================== ORG CHART */
-  const BW = 240, BH = 124;
+  const BW = 240, BH = 158;
   const COLS = [130, 402, 674, 946];
-  const ORG_W = 1075, ORG_H = 790;
+  // Row tops: IC, command staff, sections, unit row 1, unit row 2
+  const R0 = 10, R1 = R0 + BH + 36, BUS_Y = R1 + BH + 24, R2 = BUS_Y + 24, R3 = R2 + BH + 30, R4 = R3 + BH + 30;
+  const ORG_W = 1075, ORG_H = R4 + BH + 10;
   const LAYOUT = {
-    ICT:  { cx: 538,     y: 10 },
-    LOFR: { cx: COLS[0], y: 170 }, PIO: { cx: COLS[1], y: 170 }, SOF: { cx: COLS[2], y: 170 },
-    OPS:  { cx: COLS[0], y: 360 }, PSC: { cx: COLS[1], y: 360 }, LSC: { cx: COLS[2], y: 360 }, FSC: { cx: COLS[3], y: 360 },
-    DOSC: { cx: COLS[0], y: 510 }, SITL: { cx: COLS[1], y: 510 }, COML: { cx: COLS[2], y: 510 },
-    STAM: { cx: COLS[0], y: 660 }, RESL: { cx: COLS[1], y: 660 }, ITSL: { cx: COLS[2], y: 660 },
-    DOCL: { cx: COLS[3], y: 510 }
+    ICT:  { cx: 538,     y: R0 },
+    LOFR: { cx: COLS[0], y: R1 }, PIO: { cx: COLS[1], y: R1 }, SOF: { cx: COLS[2], y: R1 },
+    OPS:  { cx: COLS[0], y: R2 }, PSC: { cx: COLS[1], y: R2 }, LSC: { cx: COLS[2], y: R2 }, FSC: { cx: COLS[3], y: R2 },
+    DOSC: { cx: COLS[0], y: R3 }, SITL: { cx: COLS[1], y: R3 }, COML: { cx: COLS[2], y: R3 }, DOCL: { cx: COLS[3], y: R3 },
+    STAM: { cx: COLS[0], y: R4 }, RESL: { cx: COLS[1], y: R4 }, ITSL: { cx: COLS[2], y: R4 }
   };
   const box = (c) => ({ x: LAYOUT[c].cx - BW / 2, y: LAYOUT[c].y, w: BW, h: BH, cx: LAYOUT[c].cx });
 
   function linksSvgInner(stroke = "#1d1d1b") {
     const ic = box("ICT"), pio = box("PIO"), lofr = box("LOFR"), sof = box("SOF");
-    const busY = 335;
+    const busY = BUS_Y;
     const L = (x1, y1, x2, y2) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="1.5"/>`;
     let s = "";
     const midC = pio.y + BH / 2;
@@ -826,21 +836,36 @@
     return s;
   }
 
+  const availOrder = (a, b) => (["Full", "Partial", "Blank"].indexOf(a.avail) - ["Full", "Partial", "Blank"].indexOf(b.avail)) || a.sortName.localeCompare(b.sortName);
+
+  // Main pick: qualified personnel (plus everyone else available when "List all" is ticked)
   function teamCandidates(code, team) {
     const asg = assignments();
     const current = team.slots[code];
     const ok = (p) => p.avail !== "Unavailable" && (!asg[p.id] || p.id === current) &&
                       (team.mission !== "emac" || p.scope === "EMAC");
-    const order = (a, b) => (["Full", "Partial", "Blank"].indexOf(a.avail) - ["Full", "Partial", "Blank"].indexOf(b.avail)) || a.sortName.localeCompare(b.sortName);
-    const q = S.people.filter((p) => ok(p) && p.quals.includes(code)).sort(order);
-    const tr = S.people.filter((p) => ok(p) && !p.quals.includes(code) && p.trainee.includes(code)).sort(order);
-    const ca = S.people.filter((p) => ok(p) && !p.quals.includes(code) && !p.trainee.includes(code) && p.candidates.includes(code)).sort(order);
-    const used = new Set([...q, ...tr, ...ca].map((p) => p.id));
-    const rest = S.showAll ? S.people.filter((p) => ok(p) && !used.has(p.id)).sort(order) : [];
+    const q = S.people.filter((p) => ok(p) && p.quals.includes(code)).sort(availOrder);
+    const used = new Set(q.map((p) => p.id));
+    const rest = S.showAll ? S.people.filter((p) => ok(p) && !used.has(p.id)).sort(availOrder) : [];
     // Keep the current pick visible even if the person no longer matches (e.g. "show all" turned off)
     if (current && S.byId[current] && !used.has(current) && !rest.some((p) => p.id === current)) rest.unshift(S.byId[current]);
-    return { q, tr, ca, rest };
+    return { q, rest };
   }
+
+  // Trainee pick: open task book and/or trained in this position, not already qualified in it
+  function traineeCandidates(code, team) {
+    const asg = assignments();
+    const current = (team.trainees || {})[code];
+    const ok = (p) => p.avail !== "Unavailable" && (!asg[p.id] || p.id === current) &&
+                      (team.mission !== "emac" || p.scope === "EMAC") && !p.quals.includes(code);
+    const both = S.people.filter((p) => ok(p) && p.trainee.includes(code) && p.candidates.includes(code)).sort(availOrder);
+    const tb = S.people.filter((p) => ok(p) && p.trainee.includes(code) && !p.candidates.includes(code)).sort(availOrder);
+    const ca = S.people.filter((p) => ok(p) && !p.trainee.includes(code) && p.candidates.includes(code)).sort(availOrder);
+    const list = [...both, ...tb, ...ca];
+    const inList = !!current && list.some((p) => p.id === current);
+    return { both, tb, ca, total: list.filter((p) => p.id !== current).length, keep: current && !inList && S.byId[current] ? S.byId[current] : null };
+  }
+  const traineeKind = (p, code) => (p.trainee.includes(code) && p.candidates.includes(code) ? "task book + trained" : p.trainee.includes(code) ? "task book" : p.candidates.includes(code) ? "trained in" : "");
 
   const optLabel = (p) => {
     const flags = p.approval !== "Yes" ? " ⚠ approval" : "";
@@ -878,22 +903,40 @@
       const c = teamCandidates(pos.code, team);
       const cur = team.slots[pos.code];
       const p = cur && S.byId[cur];
-      const og = (label, list) => (list.length ? `<optgroup label="${esc(label)}">${list.map((x) => `<option value="${esc(x.id)}" ${x.id === cur ? "selected" : ""}>${esc(optLabel(x))}</option>`).join("")}</optgroup>` : "");
+      const og = (label, list, sel) => (list.length ? `<optgroup label="${esc(label)}">${list.map((x) => `<option value="${esc(x.id)}" ${x.id === sel ? "selected" : ""}>${esc(optLabel(x))}</option>`).join("")}</optgroup>` : "");
       const nAvail = c.q.filter((x) => x.id !== cur).length;
+      // Trainee select — only once a qualified person is chosen
+      const curT = (team.trainees || {})[pos.code];
+      const t = traineeCandidates(pos.code, team);
+      const traineeSel = p
+        ? `<select class="trainee-sel ${curT ? "has" : ""}" data-trainee="${pos.code}" aria-label="Trainee for ${esc(pos.title)}">
+             <option value="">${curT ? "— Remove trainee —" : t.total > 0 ? `+ Add trainee (${t.total} available)…` : "No trainees available"}</option>
+             ${t.keep ? og("Current trainee", [t.keep], curT) : ""}${og("Task book + trained in", t.both, curT)}${og("Open task book", t.tb, curT)}${og("Trained in position", t.ca, curT)}
+           </select>`
+        : `<div class="trainee-ph">Trainee: pick qualified first</div>`;
       html += `<div class="ob ${p ? "filled" : ""}" style="left:${b.x}px;top:${b.y}px;width:${BW}px;height:${BH}px">
         <div class="ob-head"><div class="ob-title">${esc(pos.title)}</div><div class="ob-code">${esc(pos.label)}</div></div>
         <select data-code="${pos.code}" aria-label="Select ${esc(pos.title)}">
-          <option value="">${p ? "— Remove selection —" : "Select personnel…"}</option>
-          ${og("Qualified", c.q)}${og("Trainee – open task book", c.tr)}${og("Trained in position", c.ca)}${og(S.showAll ? "Other available personnel" : "Current selection", c.rest)}
+          <option value="">${p ? "— Remove selection —" : "Select qualified personnel…"}</option>
+          ${og("Qualified", c.q, cur)}${og(S.showAll ? "Other available personnel" : "Current selection", c.rest, cur)}
         </select>
         <div class="avail ${nAvail ? "" : "none"}">${nAvail ? `${nAvail} more qualified available` : "No other qualified personnel available"}</div>
+        ${traineeSel}
         <div class="ob-foot" title="${p ? esc(p.name + " — " + footText(p)) : ""}">${p ? `<b>${esc(p.name)}</b> · ${esc(footText(p))}` : "Unfilled"}</div>
       </div>`;
     });
     org.innerHTML = html;
-    org.querySelectorAll("select").forEach((sel) => (sel.onchange = () => {
+    team.trainees = team.trainees || {};
+    org.querySelectorAll("select[data-code]").forEach((sel) => (sel.onchange = () => {
       const code = sel.dataset.code;
-      if (sel.value) team.slots[code] = sel.value; else delete team.slots[code];
+      if (sel.value) team.slots[code] = sel.value;
+      else { delete team.slots[code]; delete team.trainees[code]; }   // no qualified person → trainee comes off too
+      saveTeams();
+      renderAll();
+    }));
+    org.querySelectorAll("select[data-trainee]").forEach((sel) => (sel.onchange = () => {
+      const code = sel.dataset.trainee;
+      if (sel.value) team.trainees[code] = sel.value; else delete team.trainees[code];
       saveTeams();
       renderAll();
     }));
@@ -903,13 +946,13 @@
     const team = S.teams[ti];
     const pad = 20, head = 84, W = ORG_W + pad * 2, H = ORG_H + head + 40;
     let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#ffffff"/>`;
-    const filled = Object.keys(team.slots).length;
+    const filled = Object.keys(team.slots).length, nTr = Object.keys(team.trainees || {}).length;
     const loc = String(team.location || "").trim();
     s += `<rect width="${W}" height="64" fill="#14213d"/>` + T(24, 30, `${team.name} — Incident Management Team`, { size: 18, fill: "#fff", weight: 650 }) +
          T(W - 24, 24, "DEPLOYMENT LOCATION", { size: 10.5, fill: "#c9d3e6", anchor: "end", weight: 600 }) +
          (loc ? T(W - 24, 46, clip(loc, 40), { size: 16, fill: "#fff", anchor: "end", weight: 650 })
               : T(W - 24, 46, "Not set", { size: 14, fill: "#8fa0bf", anchor: "end" })) +
-         T(24, 50, `${incidentLabel()} · ${team.mission === "emac" ? "EMAC deployment" : "In-state deployment"} · ${filled} of ${POSITIONS.length} positions filled · ${stampText()}`, { size: 12, fill: "#c9d3e6" });
+         T(24, 50, `${incidentLabel()} · ${team.mission === "emac" ? "EMAC deployment" : "In-state deployment"} · ${filled} of ${POSITIONS.length} positions filled${nTr ? ` · ${nTr} trainee${nTr > 1 ? "s" : ""}` : ""} · ${stampText()}`, { size: 12, fill: "#c9d3e6" });
     s += `<g transform="translate(${pad},${head})">` + linksSvgInner();
     POSITIONS.forEach((pos) => {
       const b = box(pos.code), p = team.slots[pos.code] && S.byId[team.slots[pos.code]];
@@ -919,6 +962,12 @@
       s += p ? T(b.cx, b.y + 68, clip(p.name, 26), { size: 15, anchor: "middle", fill: "#0b0b0b", weight: 700 })
              : T(b.cx, b.y + 68, "Unfilled", { size: 13, anchor: "middle", fill: "#a12a2a", weight: 600 });
       if (p && p.restrictions) s += T(b.cx, b.y + 86, clip("Restriction: " + p.restrictions, 34), { size: 10.5, anchor: "middle", fill: "#8a1c1c" });
+      const tp = (team.trainees || {})[pos.code] && S.byId[team.trainees[pos.code]];
+      if (tp) {
+        s += `<rect x="${b.x + 10}" y="${b.y + 96}" width="${BW - 20}" height="30" rx="4" fill="#efedfa"/>`;
+        s += T(b.cx, b.y + 108, "TRAINEE", { size: 9, anchor: "middle", fill: "#3a2f8f", weight: 700 });
+        s += T(b.cx, b.y + 121, clip(tp.name + " · " + availText(tp), 36), { size: 11.5, anchor: "middle", fill: "#1d1d1b", weight: 600 });
+      }
       s += `<path d="M${b.x},${b.y + BH - 26}h${BW}v20q0,6 -6,6h${-(BW - 12)}q-6,0 -6,-6z" fill="${p ? "#1c5cab" : "#55534e"}"/>`;
       s += T(b.cx, b.y + BH - 9, p ? clip(footText(p), 34) : "", { size: 11, anchor: "middle", fill: "#fff" });
     });
@@ -1029,13 +1078,15 @@
 
   function downloadRoster() {
     const q = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
-    const head = ["Team", "Deployment location", "Deployment type", "Position code", "Position", "Name", "Email", "Phone", "Team affiliation", "Availability", "Dates available", "In-state/EMAC", "Agency approval", "Restrictions", "Response length"];
+    const head = ["Team", "Deployment location", "Deployment type", "Position code", "Position", "Role", "Name", "Email", "Phone", "Team affiliation", "Availability", "Dates available", "In-state/EMAC", "Agency approval", "Restrictions", "Response length"];
     const lines = [head.map(q).join(",")];
-    S.teams.forEach((t) => POSITIONS.forEach((pos) => {
-      const p = t.slots[pos.code] && S.byId[t.slots[pos.code]];
-      lines.push([t.name, t.location || "", t.mission === "emac" ? "EMAC" : "In-state", pos.label, pos.title,
+    const row = (t, pos, p, role) => lines.push([t.name, t.location || "", t.mission === "emac" ? "EMAC" : "In-state", pos.label, pos.title, role,
         p ? p.name : "UNFILLED", p ? p.email : "", p ? p.phone : "", p ? p.regionRaw : "", p ? p.availRaw : "", p ? p.dates : "",
         p ? p.scopeRaw : "", p ? p.approvalRaw : "", p ? p.restrictions : "", p ? p.duration : ""].map(q).join(","));
+    S.teams.forEach((t) => POSITIONS.forEach((pos) => {
+      row(t, pos, t.slots[pos.code] && S.byId[t.slots[pos.code]], "Qualified");
+      const tp = (t.trainees || {})[pos.code] && S.byId[t.trainees[pos.code]];
+      if (tp) row(t, pos, tp, "Trainee (" + traineeKind(tp, pos.code) + ")");
     }));
     const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
