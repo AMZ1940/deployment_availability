@@ -92,7 +92,7 @@
     ["incident", "Incident Description", (n) => n.includes("incident")],
     ["partialDates", "If partially available - what dates…", (n) => n.includes("partial") || n.includes("datesavail") || n.includes("whatdates")],
     ["availability", "Availability", (n) => n === "availability" || (n.includes("availab") && !n.includes("partial") && !n.includes("date"))],
-    ["scope", "In-state and EMAC", (n) => n.includes("emac")],
+    ["scope", "In-state and EMAC / Deployment type", (n) => n.includes("emac") || n.includes("deploymenttype") || n.includes("deploymentscope")],
     ["approval", "Home agency approved?", (n) => n.includes("approv")],
     ["restrictions", "Restrictions", (n) => n.includes("restrict")],
     ["trainee", "TRAINEE – open task book", (n) => n.includes("trainee") || n.includes("taskbook")],
@@ -531,7 +531,8 @@
         sortName: (last + " " + first).toLowerCase(),
         email, phone: val(r, "phone") || "", duration: val(r, "duration") || "",
         availRaw: val(r, "availability") || "", avail: "Blank",
-        scopeRaw: val(r, "scope") || "", scope: classScope(val(r, "scope")),
+        // No deployment-type question in this survey version → everyone is in-state only
+        scopeRaw: val(r, "scope") || "", scope: S.fieldMap.scope ? classScope(val(r, "scope")) : "In-state",
         approvalRaw: val(r, "approval") || "", approval: classApproval(val(r, "approval")),
         dates: cleanNote(val(r, "partialDates")), restrictions: cleanNote(val(r, "restrictions")),
         qualifiedRaw: val(r, "qualified") || "", quals: q.found,
@@ -755,7 +756,7 @@
     const noQual = S.people.filter((p) => p.avail !== "Unavailable" && !p.quals.length && S.regions.has(p.region)).length;
     const unm = Object.keys(S.unmatchedPositions);
     $("gapNote").innerHTML = [
-      "“Not stated” = the availability question was left blank. People who answered that they're not available, and entries with no name, are left out. A blank in-state/EMAC answer is counted as in-state only. “Trainees” = people who aren't qualified in the position but have an open task book, are trained in it, or listed it as their preferred position; they're not included in the deployable totals.",
+      `“Not stated” = the availability question was left blank. People who answered that they're not available, and entries with no name, are left out. A blank in-state/EMAC answer is counted as in-state only.${S.fieldMap.scope ? "" : " <b>This survey version has no deployment-type (in-state/EMAC) question, so everyone is counted as in-state only.</b>"} “Trainees” = people who aren't qualified in the position but have an open task book, are trained in it, or listed it as their preferred position; they're not included in the deployable totals.`,
       (S.unnamed || []).length ? `${S.unnamed.length} ${S.unnamed.length === 1 ? "entry has" : "entries have"} no name listed and ${S.unnamed.length === 1 ? "is" : "are"} left out of all counts.` : "",
       noQual ? `${noQual} available ${noQual === 1 ? "person has" : "people have"} no qualified position listed; they appear only under “List all available personnel” on the org chart.` : "",
       unm.length ? `Qualified positions not on this org chart: ${esc(unm.slice(0, 6).join("; "))}${unm.length > 6 ? "…" : ""}.` : ""
@@ -1349,7 +1350,7 @@
     const lines = [head.map(q).join(",")];
     const row = (t, pos, p, role) => lines.push([t.name, t.location || "", t.mission === "emac" ? "EMAC" : "In-state", pos.label, pos.title, role,
         p ? p.name : "UNFILLED", p ? p.email : "", p ? p.phone : "", p ? p.regionRaw : "", p ? p.availRaw : "", p ? p.dates : "",
-        p ? p.scopeRaw : "", p ? p.approvalRaw : "", p ? p.restrictions : "", p ? p.duration : "",
+        p ? (p.scopeRaw || (p.scope === "EMAC" ? "In-state and EMAC" : "In-state only")) : "", p ? p.approvalRaw : "", p ? p.restrictions : "", p ? p.duration : "",
         p ? p.preferred : "", p && p.prefCodes.length ? p.prefCodes.map((c) => POS[c].label + (p.quals.includes(c) ? ": yes" : ": no (training)")).join("; ") : ""].map(q).join(","));
     S.teams.forEach((t) => POSITIONS.forEach((pos) => {
       row(t, pos, t.slots[pos.code] && S.byId[t.slots[pos.code]], "Qualified");
