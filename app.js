@@ -639,14 +639,15 @@
         S.teams.splice(S.activeTeam, 1); S.activeTeam = Math.max(0, S.activeTeam - 1); saveTeams(); renderAll();
       }
     };
-    $("btnOrgPng").onclick = () => downloadSvgPng(orgSvg(S.activeTeam), fileBase() + "_" + slug(S.teams[S.activeTeam].name) + "_org_chart.png", false);
-    $("btnRoster").onclick = downloadRoster;
-    $("btnTablePng").onclick = () => downloadSvgPng(tableSvg(), fileBase() + "_position_summary.png");
+    $("btnOrgPng").onclick = () => { const t = startDelivery("Org chart image"); downloadSvgPng(orgSvg(S.activeTeam), fileBase() + "_" + slug(S.teams[S.activeTeam].name) + "_org_chart.png", false, t); };
+    $("btnRoster").onclick = () => downloadRoster(startDelivery("Team roster"));
+    $("btnTablePng").onclick = () => { const t = startDelivery("Position summary image"); downloadSvgPng(tableSvg(), fileBase() + "_position_summary.png", true, t); };
     document.querySelectorAll("[data-png]").forEach((b) => (b.onclick = () => {
       const k = b.dataset.png;
-      downloadSvgPng(k === "A" ? chartASvg(true) : chartBSvg(true), fileBase() + (k === "A" ? "_by_position.png" : "_by_affiliation.png"));
+      const t = startDelivery("Chart image");
+      downloadSvgPng(k === "A" ? chartASvg(true) : chartBSvg(true), fileBase() + (k === "A" ? "_by_position.png" : "_by_affiliation.png"), true, t);
     }));
-    $("btnPdf").onclick = downloadBriefingPdf;
+    $("btnPdf").onclick = () => downloadBriefingPdf(startDelivery("Briefing PDF"));
     wireTooltips();
     renderRegionChips();
   }
@@ -1243,6 +1244,64 @@
     const a = document.createElement("a"); a.href = url; a.download = name;
     document.body.appendChild(a); a.click(); a.remove();
   }
+
+  /* Downloads inside Experience Builder.
+     The Embed widget runs this site in a restricted (sandboxed) frame that blocks downloads.
+     So when embedded, each download button opens a small window at the moment of the click
+     (allowed, like the sign-in window); the finished file is placed there with a Download
+     button, a preview, and save/copy instructions in case the browser still blocks it. */
+  function startDelivery(title) {
+    if (!isInIframe()) return null;                       // normal tab: download directly
+    const w = window.open("", "_blank", "width=980,height=780,scrollbars=1,resizable=1");
+    if (!w) return "blocked";
+    try {
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+        <style>body{font-family:"Segoe UI",system-ui,Arial,sans-serif;margin:0;background:#f4f3ef;color:#0b0b0b}
+        header{background:#002d72;color:#fff;padding:14px 22px;border-bottom:4px solid #d22730}
+        header h1{font-size:18px;margin:0}main{padding:18px 22px}
+        .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+        a.btn,button.btn{font:inherit;font-weight:600;font-size:15px;background:#2a78d6;color:#fff;border:0;border-radius:8px;padding:10px 18px;text-decoration:none;cursor:pointer}
+        button.light{background:#fff;color:#0b0b0b;border:1px solid #d7d5ce}
+        .tip{font-size:13px;color:#52514e;margin:6px 0 14px;line-height:1.5}
+        .preview{background:#fff;border:1px solid #e4e2dc;border-radius:10px;padding:10px}
+        .preview img{max-width:100%;height:auto;display:block}.preview iframe{width:100%;height:68vh;border:0}
+        .wait{padding:40px;text-align:center;color:#52514e}.page{margin-bottom:14px}
+        @media print{@page{size:letter landscape;margin:0}header,.row,.tip{display:none}main{padding:0}
+          .preview{border:0;border-radius:0;padding:0;margin:0;page-break-after:always}.preview img{width:100%;max-height:100vh;object-fit:contain}}</style></head>
+        <body><header><h1>${esc(title)}</h1></header><main id="m"><div class="wait">Preparing your file…</div></main></body></html>`);
+      w.document.close();
+    } catch (e) { /* window still usable */ }
+    return w;
+  }
+  async function deliver(target, blob, name, kind, pageImages) {
+    if (!target) {                                         // not embedded
+      const url = URL.createObjectURL(blob); download(url, name); setTimeout(() => URL.revokeObjectURL(url), 5000); return;
+    }
+    if (target === "blocked" || target.closed) {
+      showLoadMsg("The download window was blocked. Allow pop-ups for this site and try again.", true); return;
+    }
+    const d = target.document, url = target.URL.createObjectURL(blob);
+    const tips = {
+      png: "If the download doesn't start, right-click the image below and choose <b>Save image as…</b> — or <b>Copy image</b> to paste it straight into your briefing.",
+      pdf: "If the download doesn't start, click <b>Print / Save as PDF</b> and choose <b>Save as PDF</b> as the printer — or right-click any page below and choose <b>Save image as…</b> or <b>Copy image</b>.",
+      csv: "If the download doesn't start, right-click the button and choose <b>Save link as…</b>."
+    };
+    const preview = kind === "png" ? `<div class="preview"><img src="${url}" alt="${esc(name)}"></div>`
+      : kind === "pdf" ? (pageImages || []).map((u, i) => `<div class="preview page"><img src="${u}" alt="Page ${i + 1}"></div>`).join("") : "";
+    d.getElementById("m").innerHTML =
+      `<div class="row"><a id="dl" class="btn" href="${url}" download="${esc(name)}">Download ${esc(name)}</a>
+         ${kind === "pdf" ? `<button class="btn light" onclick="window.print()">Print / Save as PDF</button>` : ""}
+         <button class="btn light" onclick="window.close()">Close</button></div>
+       <p class="tip">${tips[kind] || ""}</p>${preview}`;
+    try { d.getElementById("dl").click(); } catch (e) { /* user can click it */ }
+    try { target.focus(); } catch (e) {}
+  }
+  function failDelivery(target, msg) {
+    if (target && target !== "blocked" && !target.closed) {
+      try { target.document.getElementById("m").innerHTML = `<p class="tip" style="color:#a12a2a">${esc(msg)}</p>`; } catch (e) {}
+    }
+    showLoadMsg(esc(msg), true);
+  }
   // PNG downloads: add a white TEMA banner (color logo + red/navy rule) above the image, like the PDF pages
   function brandWrap(svg, logo, showTitle = true) {
     const m = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
@@ -1256,9 +1315,13 @@
       `<rect x="20" y="${BAND - 12}" width="${W - 40}" height="3.5" fill="${BRAND.red}"/><rect x="20" y="${BAND - 7}" width="${W - 40}" height="1" fill="${BRAND.navy}"/>` +
       inner + `</svg>`;
   }
-  async function downloadSvgPng(svg, name, showTitle = true) {
-    try { const logo = await getLogo(); const r = await svgToPng(brandWrap(svg, logo, showTitle)); download(r.url, name); }
-    catch (e) { console.error(e); showLoadMsg("Couldn't create the image in this browser.", true); }
+  async function downloadSvgPng(svg, name, showTitle = true, target = null) {
+    try {
+      const logo = await getLogo();
+      const r = await svgToPng(brandWrap(svg, logo, showTitle));
+      const blob = await (await fetch(r.url)).blob();
+      await deliver(target, blob, name, "png");
+    } catch (e) { console.error(e); failDelivery(target, "Couldn't create the image in this browser."); }
   }
 
   // TEMA logo for PDF and PNG headers.
@@ -1290,15 +1353,17 @@
     return logoCache;
   }
 
-  async function downloadBriefingPdf() {
-    if (!window.jspdf) { showLoadMsg("The PDF library didn't load. Check your connection and reload, or use the PNG downloads.", true); return; }
+  async function downloadBriefingPdf(target = null) {
+    if (!window.jspdf) { failDelivery(target, "The PDF library didn't load. Check your connection and reload, or use the PNG downloads."); return; }
     busy(true, "Building briefing PDF…");
     try {
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "letter" });
       const PW = pdf.internal.pageSize.getWidth(), PH = pdf.internal.pageSize.getHeight(), M = 28;
+      const pageShots = [];
       const place = async (svg, yTop, maxH) => {
         const r = await svgToPng(svg, 2);
+        pageShots.push(r.url);
         let w = PW - M * 2, h = w * r.h / r.w;
         if (h > maxH) { h = maxH; w = h * r.w / r.h; }
         pdf.addImage(r.url, "PNG", (PW - w) / 2, yTop, w, h);
@@ -1339,12 +1404,12 @@
         header(`${t.name} · ${t.mission === "emac" ? "EMAC" : "In-state"} deployment · ${String(t.location || "").trim() || "Location not set"} · ${nF} of ${POSITIONS.length} positions filled${nT ? ` · ${nT} trainee${nT > 1 ? "s" : ""}` : ""} · ${stampText()}`);
         await place(orgSvg(i), top, avail); footer(page);
       }
-      pdf.save(fileBase() + "_deployment_briefing.pdf");
-    } catch (e) { console.error(e); showLoadMsg("Couldn't build the PDF: " + esc(e.message || e), true); }
+      await deliver(target, pdf.output("blob"), fileBase() + "_deployment_briefing.pdf", "pdf", pageShots);
+    } catch (e) { console.error(e); failDelivery(target, "Couldn't build the PDF: " + (e.message || e)); }
     finally { PDF_MODE = false; busy(false); }
   }
 
-  function downloadRoster() {
+  function downloadRoster(target = null) {
     const q = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
     const head = ["Team", "Deployment location", "Deployment type", "Position code", "Position", "Role", "Name", "Email", "Phone", "Team affiliation", "Availability", "Dates available", "In-state/EMAC", "Agency approval", "Restrictions", "Response length", "Preferred position", "Preferred matches qualified"];
     const lines = [head.map(q).join(",")];
@@ -1358,9 +1423,7 @@
       if (tp) row(t, pos, tp, "Trainee (" + traineeKind(tp, pos.code) + ")");
     }));
     const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    download(url, fileBase() + "_team_rosters.csv");
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    deliver(target, blob, fileBase() + "_team_rosters.csv", "csv");
   }
 
   /* ================================================================== SETTINGS */
