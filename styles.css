@@ -138,6 +138,21 @@ table.gap{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeri
 .ob .ob-foot{margin-top:auto;background:#55534e;color:#fff;font-size:11.5px;padding:4px 8px;min-height:24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ob.filled{border-color:#1c5cab}
 .ob.filled .ob-foot{background:#1c5cab}
+.ob.pref-match{border-color:#157a55;border-width:2px}
+.ob.pref-match .ob-foot{background:#157a55}
+.ob.pref-other{border-color:#1c5cab;border-width:2px}
+.ob .trainee-sel{border-color:#5b4bc4}
+.org-legend{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;font-size:12.5px;color:var(--ink-2);margin:0 0 10px}
+.org-legend span{display:inline-flex;align-items:center;gap:6px}
+.org-legend .sw{display:inline-block;width:14px;height:12px;border-radius:2px}
+.org-legend .sw-match{background:#157a55}.org-legend .sw-other{background:#1c5cab}.org-legend .sw-trainee{background:#5b4bc4}
+.org-legend .lg-note{color:var(--ink-3)}
+.tag.pref-match{background:#dcf2e6;color:#14532d}
+.tag.pref-train{background:#efedfa;color:#3a2f8f}
+.pref-chip{display:inline-block;font-size:12px;font-weight:600;border-radius:6px;padding:1px 7px;margin:1px 4px 1px 0}
+.pref-chip.match{background:#dcf2e6;color:#14532d}
+.pref-chip.train{background:#efedfa;color:#3a2f8f}
+.pref-note{color:var(--ink-3);font-size:12px}
 .ob .avail{font-size:10.5px;color:var(--ink-3);text-align:center;padding:2px 0}
 .ob .avail.none{color:#a12a2a;font-weight:600}
 

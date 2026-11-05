@@ -65,9 +65,17 @@
     return { found, unmatched };
   }
 
+  // Trainee for a position = not qualified in it, and has an open task book, is trained in it,
+  // or named it as their preferred position
+  const isTraineeFor = (p, code) => !p.quals.includes(code) &&
+    (p.trainee.includes(code) || p.candidates.includes(code) || (p.prefTrain || []).includes(code));
+  const prefersPos = (p, code) => (p.prefCodes || []).includes(code);
+
   /* ================================================================== COLORS (validated: dataviz palette check) */
   const REGIONS = ["East", "Middle", "West", "Unspecified"];
   const REGION_COLOR = { East: "#2a78d6", Middle: "#eb6834", West: "#1baf7a", Unspecified: "#a3a29c" };
+  // Org chart color coding for preferred position
+  const PREF_COLOR = { match: "#157a55", other: "#1c5cab", trainee: "#5b4bc4" };
   const AVAIL_COLOR = { Full: "#6250d6", Partial: "#eda100", Blank: "#a3a29c" };
   const AVAIL_LABEL = { Full: "Full", Partial: "Partial / Restrictions", Blank: "Not stated" };
   const AVAIL_SHORT = { Full: "Full", Partial: "Partial/Restr.", Blank: "Not stated" };
@@ -534,6 +542,9 @@
         when, subNum, submissionId: val(r, "submissionId") || ""
       };
       Object.assign(p, classifyAvailability(p.availRaw, p.restrictions, p.dates));
+      // Preferred position: matches a qualified position, or (if not qualified) counts as a training position
+      p.prefCodes = matchPositions(p.preferred).found;
+      p.prefTrain = p.prefCodes.filter((c) => !p.quals.includes(c));
       // Keep the most recently submitted entry; same timestamp → higher submission ID wins
       const prev = byKey[key];
       const newer = !prev || when > prev.when || (+when === +prev.when && subNum >= prev.subNum);
@@ -586,7 +597,7 @@
         if (p.quals.includes(pos.code)) (p.scope === "EMAC" ? r.em : r.in)[p.avail]++;
         // Trainee = open task book OR trained in this position, and not already qualified in it.
         // Listed in both fields still counts once.
-        else if (p.trainee.includes(pos.code) || p.candidates.includes(pos.code)) p.scope === "EMAC" ? r.emTr++ : r.inTr++;
+        else if (isTraineeFor(p, pos.code)) p.scope === "EMAC" ? r.emTr++ : r.inTr++;
       });
       r.inT = r.in.Full + r.in.Partial + r.in.Blank;
       r.emT = r.em.Full + r.em.Partial + r.em.Blank;
@@ -744,7 +755,7 @@
     const noQual = S.people.filter((p) => p.avail !== "Unavailable" && !p.quals.length && S.regions.has(p.region)).length;
     const unm = Object.keys(S.unmatchedPositions);
     $("gapNote").innerHTML = [
-      "“Not stated” = the availability question was left blank. People who answered that they're not available, and entries with no name, are left out. A blank in-state/EMAC answer is counted as in-state only. “Trainees” = people with an open task book or trained in the position who aren't qualified in it; they're not included in the deployable totals.",
+      "“Not stated” = the availability question was left blank. People who answered that they're not available, and entries with no name, are left out. A blank in-state/EMAC answer is counted as in-state only. “Trainees” = people who aren't qualified in the position but have an open task book, are trained in it, or listed it as their preferred position; they're not included in the deployable totals.",
       (S.unnamed || []).length ? `${S.unnamed.length} ${S.unnamed.length === 1 ? "entry has" : "entries have"} no name listed and ${S.unnamed.length === 1 ? "is" : "are"} left out of all counts.` : "",
       noQual ? `${noQual} available ${noQual === 1 ? "person has" : "people have"} no qualified position listed; they appear only under “List all available personnel” on the org chart.` : "",
       unm.length ? `Qualified positions not on this org chart: ${esc(unm.slice(0, 6).join("; "))}${unm.length > 6 ? "…" : ""}.` : ""
@@ -753,8 +764,21 @@
 
   /* ================================================================== DRAWER (personnel for a position) */
   let openCode = null;
+  // Preferred position vs. qualified position, for the personnel cards
+  function prefSummary(p) {
+    if (!String(p.preferred || "").trim()) return { html: "", tags: [] };
+    if (!p.prefCodes.length) return { html: `${esc(p.preferred)} <span class="pref-note">(not one of the org chart positions)</span>`, tags: [] };
+    const parts = p.prefCodes.map((c) => p.quals.includes(c)
+      ? `<span class="pref-chip match">${esc(POS[c].label)} ✓ matches qualified position</span>`
+      : `<span class="pref-chip train">${esc(POS[c].label)} · not qualified — counted as training</span>`);
+    const tags = p.prefCodes.map((c) => p.quals.includes(c)
+      ? `<span class="tag pref-match">Preferred ${esc(POS[c].label)} ✓ qualified</span>`
+      : `<span class="tag pref-train">Preferred ${esc(POS[c].label)} · training</span>`);
+    return { html: parts.join(" "), tags };
+  }
   function personCard(p, asg, role) {
     const a = asg[p.id];
+    const pref = prefSummary(p);
     const tags = [
       `<span class="tag">${esc(p.region === "Unspecified" ? "Affiliation not stated" : p.region)}</span>`,
       p.avail === "Full" ? `<span class="tag full">Full availability</span>` : "",
@@ -763,10 +787,12 @@
       p.avail === "Blank" ? `<span class="tag">Availability not stated</span>` : "",
       p.scope === "EMAC" ? `<span class="tag emac">In-state & EMAC</span>` : `<span class="tag">In-state only</span>`,
       p.approval !== "Yes" ? `<span class="tag warn">Agency approval: ${esc(p.approvalRaw || "not answered")}</span>` : "",
+      ...pref.tags,
       p.dupes ? `<span class="tag">Latest of ${p.dupes + 1} submissions</span>` : "",
       a ? `<span class="tag asg">On ${esc(S.teams[a.team].name)} · ${esc(POS[a.code].label)}${a.role === "trainee" ? " trainee" : ""}</span>` : ""
     ].join("");
     const row = (k, v) => (v ? `<dt>${k}</dt><dd>${esc(v)}</dd>` : "");
+    const rowHtml = (k, html) => (html ? `<dt>${k}</dt><dd>${html}</dd>` : "");
     return `<div class="pcard ${a ? "assigned" : ""}">
       <div class="p-top"><span class="p-name">${esc(p.name)}</span><span class="sub">${esc(role)}</span></div>
       <div class="p-tags">${tags}</div>
@@ -777,7 +803,7 @@
         ${row("Response length", p.duration)}
         ${row("Submitted", p.when && +p.when ? p.when.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "")}
         ${row("Qualified", p.qualifiedRaw)}
-        ${row("Preferred", p.preferred)}
+        ${rowHtml("Preferred position", pref.html)}
         ${row("Trainee task book", p.traineeRaw)}
         ${row("Trained in", p.candidatesRaw)}
         ${row("Phone", p.phone)}
@@ -794,11 +820,14 @@
     const q = base.filter((p) => p.quals.includes(code)).sort(order);
     const tr = base.filter((p) => !p.quals.includes(code) && p.trainee.includes(code)).sort(order);
     const ca = base.filter((p) => !p.quals.includes(code) && !p.trainee.includes(code) && p.candidates.includes(code)).sort(order);
+    const pf = base.filter((p) => !p.quals.includes(code) && !p.trainee.includes(code) && !p.candidates.includes(code) && p.prefTrain.includes(code)).sort(order);
     const sec = (title, list, role) => `<h3 class="dr-sec">${title} (${list.filter((p) => !asg[p.id]).length} available${list.some((p) => asg[p.id]) ? `, ${list.filter((p) => asg[p.id]).length} placed` : ""})</h3>` +
-      (list.length ? list.map((p) => personCard(p, asg, role)).join("") : `<p class="empty">No one in this group.</p>`);
+      (list.length ? list.map((p) => personCard(p, asg, typeof role === "function" ? role(p) : role)).join("") : `<p class="empty">No one in this group.</p>`);
     $("drCode").textContent = pos.label + (S.regions.size < REGIONS.length ? " · " + [...S.regions].join(", ") : "");
     $("drTitle").textContent = pos.title;
-    $("drBody").innerHTML = sec("Qualified", q, "Qualified") + sec("Trainees with an open task book", tr, "Trainee") + sec("Trained in this position", ca, "Candidate");
+    $("drBody").innerHTML = sec("Qualified", q, (p) => (prefersPos(p, code) ? "★ Qualified · preferred position" : "Qualified")) +
+      sec("Trainees with an open task book", tr, "Trainee") + sec("Trained in this position", ca, "Candidate") +
+      sec("Preferred position — not yet qualified (training)", pf, "Training · preferred position");
     $("drawer").hidden = false; $("drawerBack").hidden = false;
   }
   function closeDrawer() { $("drawer").hidden = true; $("drawerBack").hidden = true; openCode = null; }
@@ -993,12 +1022,14 @@
     const current = team.slots[code];
     const ok = (p) => p.avail !== "Unavailable" && (!asg[p.id] || p.id === current) &&
                       (team.mission !== "emac" || p.scope === "EMAC");
-    const q = S.people.filter((p) => ok(p) && p.quals.includes(code)).sort(availOrder);
+    const qPref = S.people.filter((p) => ok(p) && p.quals.includes(code) && prefersPos(p, code)).sort(availOrder);
+    const qOther = S.people.filter((p) => ok(p) && p.quals.includes(code) && !prefersPos(p, code)).sort(availOrder);
+    const q = [...qPref, ...qOther];
     const used = new Set(q.map((p) => p.id));
     const rest = S.showAll ? S.people.filter((p) => ok(p) && !used.has(p.id)).sort(availOrder) : [];
     // Keep the current pick visible even if the person no longer matches (e.g. "show all" turned off)
     if (current && S.byId[current] && !used.has(current) && !rest.some((p) => p.id === current)) rest.unshift(S.byId[current]);
-    return { q, rest };
+    return { q, qPref, qOther, rest };
   }
 
   // Trainee pick: open task book and/or trained in this position, not already qualified in it
@@ -1010,11 +1041,15 @@
     const both = S.people.filter((p) => ok(p) && p.trainee.includes(code) && p.candidates.includes(code)).sort(availOrder);
     const tb = S.people.filter((p) => ok(p) && p.trainee.includes(code) && !p.candidates.includes(code)).sort(availOrder);
     const ca = S.people.filter((p) => ok(p) && !p.trainee.includes(code) && p.candidates.includes(code)).sort(availOrder);
-    const list = [...both, ...tb, ...ca];
+    const pf = S.people.filter((p) => ok(p) && !p.trainee.includes(code) && !p.candidates.includes(code) && p.prefTrain.includes(code)).sort(availOrder);
+    const list = [...both, ...tb, ...ca, ...pf];
     const inList = !!current && list.some((p) => p.id === current);
-    return { both, tb, ca, total: list.filter((p) => p.id !== current).length, keep: current && !inList && S.byId[current] ? S.byId[current] : null };
+    return { both, tb, ca, pf, total: list.filter((p) => p.id !== current).length, keep: current && !inList && S.byId[current] ? S.byId[current] : null };
   }
-  const traineeKind = (p, code) => (p.trainee.includes(code) && p.candidates.includes(code) ? "task book + trained" : p.trainee.includes(code) ? "task book" : p.candidates.includes(code) ? "trained in" : "");
+  const traineeKind = (p, code) => {
+    const k = p.trainee.includes(code) && p.candidates.includes(code) ? "task book + trained" : p.trainee.includes(code) ? "task book" : p.candidates.includes(code) ? "trained in" : "";
+    return [k, prefersPos(p, code) ? "preferred position" : ""].filter(Boolean).join(", ");
+  };
 
   const optLabel = (p) => {
     const flags = p.approval !== "Yes" ? " ⚠ approval" : "";
@@ -1029,6 +1064,9 @@
     return parts.join(" + ");
   }
   const footText = (p) => [p.region === "Unspecified" ? "Affiliation n/s" : p.region, availText(p, true), p.scope === "EMAC" ? "EMAC" : ""].filter(Boolean).join(" · ");
+
+  const prefFoot = (p, code) => prefersPos(p, code) ? "preferred position"
+    : p.prefCodes.length ? "prefers " + p.prefCodes.map((c) => POS[c].label).join(", ") : "no preference stated";
 
   function renderTeamTabs() {
     $("teamTabs").innerHTML = S.teams.map((t, i) =>
@@ -1052,7 +1090,7 @@
       const c = teamCandidates(pos.code, team);
       const cur = team.slots[pos.code];
       const p = cur && S.byId[cur];
-      const og = (label, list, sel) => (list.length ? `<optgroup label="${esc(label)}">${list.map((x) => `<option value="${esc(x.id)}" ${x.id === sel ? "selected" : ""}>${esc(optLabel(x))}</option>`).join("")}</optgroup>` : "");
+      const og = (label, list, sel) => (list.length ? `<optgroup label="${esc(label)}">${list.map((x) => `<option value="${esc(x.id)}" ${x.id === sel ? "selected" : ""}>${prefersPos(x, pos.code) ? "★ " : ""}${esc(optLabel(x))}</option>`).join("")}</optgroup>` : "");
       const nAvail = c.q.filter((x) => x.id !== cur).length;
       // Trainee select — only once a qualified person is chosen
       const curT = (team.trainees || {})[pos.code];
@@ -1060,18 +1098,19 @@
       const traineeSel = p
         ? `<select class="trainee-sel ${curT ? "has" : ""}" data-trainee="${pos.code}" aria-label="Trainee for ${esc(pos.title)}">
              <option value="">${curT ? "— Remove trainee —" : t.total > 0 ? `+ Add trainee (${t.total} available)…` : "No trainees available"}</option>
-             ${t.keep ? og("Current trainee", [t.keep], curT) : ""}${og("Task book + trained in", t.both, curT)}${og("Open task book", t.tb, curT)}${og("Trained in position", t.ca, curT)}
+             ${t.keep ? og("Current trainee", [t.keep], curT) : ""}${og("Task book + trained in", t.both, curT)}${og("Open task book", t.tb, curT)}${og("Trained in position", t.ca, curT)}${og("Preferred position (not yet qualified)", t.pf, curT)}
            </select>`
         : `<div class="trainee-ph">Trainee: pick qualified first</div>`;
-      html += `<div class="ob ${p ? "filled" : ""}" style="left:${b.x}px;top:${b.y}px;width:${BW}px;height:${BH}px">
+      const prefCls = p ? (prefersPos(p, pos.code) ? "pref-match" : "pref-other") : "";
+      html += `<div class="ob ${p ? "filled" : ""} ${prefCls}" style="left:${b.x}px;top:${b.y}px;width:${BW}px;height:${BH}px">
         <div class="ob-head"><div class="ob-title">${esc(pos.title)}</div><div class="ob-code">${esc(pos.label)}</div></div>
         <select data-code="${pos.code}" aria-label="Select ${esc(pos.title)}">
           <option value="">${p ? "— Remove selection —" : "Select qualified personnel…"}</option>
-          ${og("Qualified", c.q, cur)}${og(S.showAll ? "Other available personnel" : "Current selection", c.rest, cur)}
+          ${og("Qualified · preferred position", c.qPref, cur)}${og(c.qPref.length ? "Qualified · other preference" : "Qualified", c.qOther, cur)}${og(S.showAll ? "Other available personnel" : "Current selection", c.rest, cur)}
         </select>
         <div class="avail ${nAvail ? "" : "none"}">${nAvail ? `${nAvail} more qualified available` : "No other qualified personnel available"}</div>
         ${traineeSel}
-        <div class="ob-foot" title="${p ? esc(p.name + " — " + footText(p)) : ""}">${p ? `<b>${esc(p.name)}</b> · ${esc(footText(p))}` : "Unfilled"}</div>
+        <div class="ob-foot" title="${p ? esc(p.name + " — " + footText(p) + " — " + prefFoot(p, pos.code)) : ""}">${p ? `${prefersPos(p, pos.code) ? "★ " : ""}<b>${esc(p.name)}</b> · ${esc(footText(p))}` : "Unfilled"}</div>
       </div>`;
     });
     org.innerHTML = html;
@@ -1093,7 +1132,7 @@
 
   function orgSvg(ti) {
     const team = S.teams[ti];
-    const pad = 20, head = 140 - DH(), W = ORG_W + pad * 2, H = ORG_H + head + 40;
+    const pad = 20, head = 140 - DH(), W = ORG_W + pad * 2, H = ORG_H + head + 44;
     let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#ffffff"/>`;
     const filled = Object.keys(team.slots).length, nTr = Object.keys(team.trainees || {}).length;
     const loc = String(team.location || "").trim();
@@ -1111,22 +1150,28 @@
     s += `<g transform="translate(${pad},${head})">` + linksSvgInner();
     POSITIONS.forEach((pos) => {
       const b = box(pos.code), p = team.slots[pos.code] && S.byId[team.slots[pos.code]];
-      s += `<rect x="${b.x}" y="${b.y}" width="${BW}" height="${BH}" rx="6" fill="#fff" stroke="${p ? "#1c5cab" : "#1d1d1b"}" stroke-width="1.5"/>`;
+      const pc = p ? (prefersPos(p, pos.code) ? PREF_COLOR.match : PREF_COLOR.other) : "#55534e";
+      s += `<rect x="${b.x}" y="${b.y}" width="${BW}" height="${BH}" rx="6" fill="#fff" stroke="${p ? pc : "#1d1d1b"}" stroke-width="${p ? 2 : 1.5}"/>`;
       s += T(b.cx, b.y + 20, pos.title, { size: 12.5, anchor: "middle", fill: "#0b0b0b", weight: 650, deco: "underline" });
       s += T(b.cx, b.y + 36, pos.label, { size: 11, anchor: "middle", fill: "#52514e" });
-      s += p ? T(b.cx, b.y + 68, clip(p.name, 26), { size: 15, anchor: "middle", fill: "#0b0b0b", weight: 700 })
+      s += p ? T(b.cx, b.y + 68, (prefersPos(p, pos.code) ? "★ " : "") + clip(p.name, 26), { size: 15, anchor: "middle", fill: "#0b0b0b", weight: 700 })
              : T(b.cx, b.y + 68, "Unfilled", { size: 13, anchor: "middle", fill: "#a12a2a", weight: 600 });
       if (p && p.restrictions) s += T(b.cx, b.y + 86, clip("Restriction: " + p.restrictions, 34), { size: 10.5, anchor: "middle", fill: "#8a1c1c" });
       const tp = (team.trainees || {})[pos.code] && S.byId[team.trainees[pos.code]];
       if (tp) {
-        s += `<rect x="${b.x + 10}" y="${b.y + 96}" width="${BW - 20}" height="30" rx="4" fill="#efedfa"/>`;
-        s += T(b.cx, b.y + 108, "TRAINEE", { size: 9, anchor: "middle", fill: "#3a2f8f", weight: 700 });
+        s += `<rect x="${b.x + 10}" y="${b.y + 96}" width="${BW - 20}" height="30" rx="4" fill="#efedfa" stroke="${PREF_COLOR.trainee}" stroke-width="1"/>`;
+        s += T(b.cx, b.y + 108, prefersPos(tp, pos.code) ? "TRAINEE · ★ PREFERRED POSITION" : "TRAINEE", { size: 9, anchor: "middle", fill: "#3a2f8f", weight: 700 });
         s += T(b.cx, b.y + 121, clip(tp.name + " · " + availText(tp), 36), { size: 11.5, anchor: "middle", fill: "#1d1d1b", weight: 600 });
       }
-      s += `<path d="M${b.x},${b.y + BH - 26}h${BW}v20q0,6 -6,6h${-(BW - 12)}q-6,0 -6,-6z" fill="${p ? "#1c5cab" : "#55534e"}"/>`;
+      s += `<path d="M${b.x},${b.y + BH - 26}h${BW}v20q0,6 -6,6h${-(BW - 12)}q-6,0 -6,-6z" fill="${pc}"/>`;
       s += T(b.cx, b.y + BH - 9, p ? clip(footText(p), 34) : "", { size: 11, anchor: "middle", fill: "#fff" });
     });
-    s += `</g>` + T(pad, H - 14, "Availability and affiliation as reported in the deployment survey.", { size: 11, fill: "#8a8984" });
+    // Legend
+    const ly = H - 18;
+    const key = (x, color, label) => `<rect x="${x}" y="${ly - 10}" width="14" height="12" rx="2" fill="${color}"/>` + T(x + 20, ly, label, { size: 11.5, fill: "#3d3d3a" });
+    s += `</g>` + key(pad, PREF_COLOR.match, "★ Qualified · preferred position") + key(pad + 230, PREF_COLOR.other, "Qualified · other or no preference") +
+         key(pad + 475, PREF_COLOR.trainee, "Trainee") +
+         T(W - pad, ly, "Availability, affiliation and preferences as reported in the deployment survey.", { size: 11, fill: "#8a8984", anchor: "end" });
     return s + "</svg>";
   }
 
@@ -1300,11 +1345,12 @@
 
   function downloadRoster() {
     const q = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
-    const head = ["Team", "Deployment location", "Deployment type", "Position code", "Position", "Role", "Name", "Email", "Phone", "Team affiliation", "Availability", "Dates available", "In-state/EMAC", "Agency approval", "Restrictions", "Response length"];
+    const head = ["Team", "Deployment location", "Deployment type", "Position code", "Position", "Role", "Name", "Email", "Phone", "Team affiliation", "Availability", "Dates available", "In-state/EMAC", "Agency approval", "Restrictions", "Response length", "Preferred position", "Preferred matches qualified"];
     const lines = [head.map(q).join(",")];
     const row = (t, pos, p, role) => lines.push([t.name, t.location || "", t.mission === "emac" ? "EMAC" : "In-state", pos.label, pos.title, role,
         p ? p.name : "UNFILLED", p ? p.email : "", p ? p.phone : "", p ? p.regionRaw : "", p ? p.availRaw : "", p ? p.dates : "",
-        p ? p.scopeRaw : "", p ? p.approvalRaw : "", p ? p.restrictions : "", p ? p.duration : ""].map(q).join(","));
+        p ? p.scopeRaw : "", p ? p.approvalRaw : "", p ? p.restrictions : "", p ? p.duration : "",
+        p ? p.preferred : "", p && p.prefCodes.length ? p.prefCodes.map((c) => POS[c].label + (p.quals.includes(c) ? ": yes" : ": no (training)")).join("; ") : ""].map(q).join(","));
     S.teams.forEach((t) => POSITIONS.forEach((pos) => {
       row(t, pos, t.slots[pos.code] && S.byId[t.slots[pos.code]], "Qualified");
       const tp = (t.trainees || {})[pos.code] && S.byId[t.trainees[pos.code]];
